@@ -2,3 +2,8 @@
 .env
 .env.*
 !.env.example
+# Local temporary docs
+CHANGED-FILES.txt
+README-FIRST.txt
+README-HOTFIX.txt
+README.txt

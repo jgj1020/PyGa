@@ -4,10 +4,10 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Unique,
-} from 'typeorm';
+} from "typeorm";
 
-@Entity('users')
-@Unique(['email'])
+@Entity("users")
+@Unique(["email"])
 export class User {
   @PrimaryGeneratedColumn()
   id: number;
@@ -20,6 +20,9 @@ export class User {
 
   @Column()
   password: string;
+
+  @Column({ name: "is_admin", default: false })
+  isAdmin: boolean;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -3,6 +3,8 @@ import { TypeOrmModule } from "@nestjs/typeorm";
 import { AuthModule } from "./auth/auth.module.js";
 import { User } from "./users/user.entity.js";
 import { CommunityModule } from "./community/community.module.js";
+import { AdminModule } from "./admin/admin.module.js";
+
 @Module({
   imports: [
     TypeOrmModule.forRoot({
@@ -17,6 +19,7 @@ import { CommunityModule } from "./community/community.module.js";
     }),
     AuthModule,
     CommunityModule,
+    AdminModule,
   ],
 })
 export class AppModule {}
