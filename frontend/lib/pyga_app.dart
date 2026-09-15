@@ -20,8 +20,60 @@ const muted = Color(0xFF8D93A5);
 const danger = Color(0xFFFF667A);
 const warning = Color(0xFFFFC765);
 
-const games = ['VALORANT', 'League of Legends', '배틀그라운드', 'FC Online'];
+const games = ['League of Legends', 'VALORANT', '배틀그라운드', 'FC Online'];
 const modes = ['경쟁전', '일반전', '칼바람 나락', '자유 플레이'];
+
+const gameArtwork = <String, String>{
+  'League of Legends': 'assets/games/league.jpg',
+  'VALORANT': 'assets/games/valorant.jpg',
+  '배틀그라운드': 'assets/games/pubg.jpg',
+  'FC Online': 'assets/games/fc_online.jpg',
+};
+
+String gameDisplayName(String game) {
+  switch (game) {
+    case 'League of Legends':
+      return '리그 오브 레전드';
+    case 'VALORANT':
+      return '발로란트';
+    case '배틀그라운드':
+      return '배틀그라운드';
+    case 'FC Online':
+      return 'FC 온라인';
+    default:
+      return game;
+  }
+}
+
+String gameTagline(String game) {
+  switch (game) {
+    case 'League of Legends':
+      return '랭크부터 칼바람까지, 바로 같이 할 팀을 찾아보세요.';
+    case 'VALORANT':
+      return '듀오부터 5인큐까지, 호흡 맞는 요원을 모집해보세요.';
+    case '배틀그라운드':
+      return '치킨을 향해 출발. 듀오와 스쿼드를 빠르게 모아보세요.';
+    case 'FC Online':
+      return '친선부터 팀플레이까지, 같이 뛸 플레이어를 만나보세요.';
+    default:
+      return '지금 함께 플레이할 파티를 찾아보세요.';
+  }
+}
+
+Color gameAccent(String game) {
+  switch (game) {
+    case 'League of Legends':
+      return const Color(0xFF2ED7D0);
+    case 'VALORANT':
+      return const Color(0xFFFF5A73);
+    case '배틀그라운드':
+      return const Color(0xFFFFC246);
+    case 'FC Online':
+      return const Color(0xFFE4B856);
+    default:
+      return purple;
+  }
+}
 
 void notice(
   BuildContext context,
@@ -1414,34 +1466,64 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      const TeamsPage(),
-      const TeamsPage(search: true),
+    final pages = <Widget>[
+      TeamsPage(
+        onCreate: () => setState(() => tab = 2),
+      ),
+      TeamsPage(
+        search: true,
+        onCreate: () => setState(() => tab = 2),
+      ),
       CreateTeamPage(onCreated: () => setState(() => tab = 3)),
       const TeamsPage(mine: true),
       const ProfilePage(),
     ];
 
+    final maxWidth = tab == 0
+        ? 1180.0
+        : tab == 1
+            ? 1060.0
+            : tab == 3
+                ? 960.0
+                : 760.0;
+
     return Scaffold(
       body: Stack(
         children: [
-          const _AmbientBackground(),
+          const _AmbientBackground(intensity: 1.25),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -1.15),
+                    radius: 1.1,
+                    colors: [purple.withAlpha(22), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
+          ),
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
+              constraints: BoxConstraints(maxWidth: maxWidth),
               child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 320),
+                duration: const Duration(milliseconds: 380),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 transitionBuilder: (child, animation) {
+                  final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
                   return FadeTransition(
-                    opacity: animation,
+                    opacity: curved,
                     child: SlideTransition(
                       position: Tween<Offset>(
-                        begin: const Offset(.04, .015),
+                        begin: const Offset(.035, .018),
                         end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
+                      ).animate(curved),
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: .992, end: 1).animate(curved),
+                        child: child,
+                      ),
                     ),
                   );
                 },
@@ -1451,16 +1533,23 @@ class _MainPageState extends State<MainPage> {
           ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (index) => setState(() => tab = index),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded, color: mint), label: '홈'),
-          NavigationDestination(icon: Icon(Icons.search_rounded), selectedIcon: Icon(Icons.search_rounded, color: mint), label: '찾기'),
-          NavigationDestination(icon: Icon(Icons.add_circle_outline_rounded), selectedIcon: Icon(Icons.add_circle_rounded, color: mint), label: '파티'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline_rounded), selectedIcon: Icon(Icons.chat_bubble_rounded, color: mint), label: '채팅'),
-          NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded, color: mint), label: '프로필'),
-        ],
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF0D0F15),
+          border: Border(top: BorderSide(color: purple.withAlpha(45))),
+          boxShadow: [BoxShadow(color: purple.withAlpha(16), blurRadius: 24, offset: const Offset(0, -8))],
+        ),
+        child: NavigationBar(
+          selectedIndex: tab,
+          onDestinationSelected: (index) => setState(() => tab = index),
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded, color: mint), label: '홈'),
+            NavigationDestination(icon: Icon(Icons.search_rounded), selectedIcon: Icon(Icons.search_rounded, color: mint), label: '찾기'),
+            NavigationDestination(icon: Icon(Icons.add_circle_outline_rounded), selectedIcon: Icon(Icons.add_circle_rounded, color: mint), label: '파티'),
+            NavigationDestination(icon: Icon(Icons.chat_bubble_outline_rounded), selectedIcon: Icon(Icons.chat_bubble_rounded, color: mint), label: '채팅'),
+            NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded, color: mint), label: '프로필'),
+          ],
+        ),
       ),
     );
   }
@@ -1469,8 +1558,14 @@ class _MainPageState extends State<MainPage> {
 class TeamsPage extends StatefulWidget {
   final bool mine;
   final bool search;
+  final VoidCallback? onCreate;
 
-  const TeamsPage({super.key, this.mine = false, this.search = false});
+  const TeamsPage({
+    super.key,
+    this.mine = false,
+    this.search = false,
+    this.onCreate,
+  });
 
   @override
   State<TeamsPage> createState() => _TeamsPageState();
@@ -1483,6 +1578,8 @@ class _TeamsPageState extends State<TeamsPage> {
   String? error;
   bool loading = true;
   int? joining;
+
+  bool get isHome => !widget.mine && !widget.search;
 
   @override
   void initState() {
@@ -1541,7 +1638,10 @@ class _TeamsPageState extends State<TeamsPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('「${team['title']}」에 들어가려면 방장이 알려준 숫자 4자리 코드가 필요합니다.', style: const TextStyle(color: muted, height: 1.5)),
+            Text(
+              '「${team['title']}」에 들어가려면 방장이 알려준 숫자 4자리 코드가 필요합니다.',
+              style: const TextStyle(color: muted, height: 1.5),
+            ),
             const SizedBox(height: 16),
             TextField(
               controller: code,
@@ -1627,30 +1727,123 @@ class _TeamsPageState extends State<TeamsPage> {
         .toList();
   }
 
+  Map<String, int> get gameCounts {
+    final result = <String, int>{for (final game in games) game: 0};
+    for (final raw in teams) {
+      final team = Map<String, dynamic>.from(raw as Map);
+      final game = '${team['game']}';
+      if (result.containsKey(game)) result[game] = (result[game] ?? 0) + 1;
+    }
+    return result;
+  }
+
+  Widget buildPartyGrid() {
+    final items = visible;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoColumns = constraints.maxWidth >= 760;
+        final threeColumns = constraints.maxWidth >= 1380;
+        final cardWidth = threeColumns
+            ? (constraints.maxWidth - 32) / 3
+            : twoColumns
+                ? (constraints.maxWidth - 16) / 2
+                : constraints.maxWidth;
+        return Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: items.asMap().entries.map((entry) {
+            return SizedBox(
+              width: cardWidth,
+              child: _Entrance(
+                delay: math.min(entry.key * 45, 260).toInt(),
+                child: TeamCard(
+                  team: entry.value,
+                  busy: joining == entry.value['id'],
+                  onOpen: () => enter(entry.value),
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.mine
         ? '내 채팅'
         : widget.search
             ? '파티 찾기'
-            : '홈';
+            : 'PyGa';
 
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+        backgroundColor: Colors.transparent,
+        titleSpacing: 18,
+        title: isHome
+            ? const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BrandMark(size: 34, showName: false),
+                  SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('PyGa', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, height: 1)),
+                      SizedBox(height: 3),
+                      Text('PLAY TOGETHER', style: TextStyle(color: mint, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1.4)),
+                    ],
+                  ),
+                ],
+              )
+            : Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
         actions: [
-          IconButton(onPressed: load, icon: const Icon(Icons.refresh_rounded)),
+          if (isHome)
+            Container(
+              margin: const EdgeInsets.only(right: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: mint.withAlpha(14),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: mint.withAlpha(55)),
+              ),
+              child: const Row(
+                children: [
+                  _LiveDot(),
+                  SizedBox(width: 6),
+                  Text('LIVE', style: TextStyle(color: mint, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                ],
+              ),
+            ),
+          IconButton(onPressed: load, tooltip: '새로고침', icon: const Icon(Icons.refresh_rounded)),
+          const SizedBox(width: 8),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: load,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 36),
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            if (!widget.mine && !widget.search)
-              _HomeHero(nickname: '${Api.user['nickname'] ?? ''}'),
-            if (!widget.mine && !widget.search) const SizedBox(height: 22),
+            if (isHome) ...[
+              _HomeGameHero(
+                nickname: '${Api.user['nickname'] ?? ''}',
+                counts: gameCounts,
+                selectedGame: selected,
+                onSelectGame: (game) => setState(() => selected = game),
+                onCreate: widget.onCreate,
+              ),
+              const SizedBox(height: 24),
+              _GameRail(
+                counts: gameCounts,
+                selectedGame: selected,
+                onSelect: (game) => setState(() => selected = selected == game ? null : game),
+                onClear: () => setState(() => selected = null),
+              ),
+              const SizedBox(height: 30),
+            ],
             if (widget.search) ...[
               TextField(
                 controller: query,
@@ -1658,40 +1851,72 @@ class _TeamsPageState extends State<TeamsPage> {
                 decoration: const InputDecoration(
                   hintText: '게임, 모드, 파티 소개, 방장 검색',
                   prefixIcon: Icon(Icons.search_rounded),
+                  suffixIcon: Icon(Icons.tune_rounded),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
+              _GameRail(
+                compact: true,
+                counts: gameCounts,
+                selectedGame: selected,
+                onSelect: (game) => setState(() => selected = selected == game ? null : game),
+                onClear: () => setState(() => selected = null),
+              ),
+              const SizedBox(height: 26),
             ],
             if (!widget.mine) ...[
-              SizedBox(
-                height: 42,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    _FilterChip(
-                      text: '전체',
-                      selected: selected == null,
-                      onTap: () => setState(() => selected = null),
-                    ),
-                    ...games.map(
-                      (game) => _FilterChip(
-                        text: game,
-                        selected: selected == game,
-                        onTap: () => setState(() => selected = selected == game ? null : game),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
               Row(
                 children: [
-                  Text(
-                    widget.search ? '모집 중인 파티' : '🔥 지금 같이 할 사람',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                  Container(
+                    width: 4,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: selected == null ? purple : gameAccent(selected!),
+                      borderRadius: BorderRadius.circular(99),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (selected == null ? purple : gameAccent(selected!)).withAlpha(100),
+                          blurRadius: 12,
+                        ),
+                      ],
+                    ),
                   ),
-                  const Spacer(),
-                  Text('${visible.length}개', style: const TextStyle(color: muted, fontSize: 12)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          selected == null
+                              ? (widget.search ? '모집 중인 파티' : '지금 뜨는 파티')
+                              : '${gameDisplayName(selected!)} 파티',
+                          style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          selected == null ? '실시간으로 모집 중인 파티를 확인하세요.' : gameTagline(selected!),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: muted, fontSize: 11.5),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (selected != null)
+                    TextButton.icon(
+                      onPressed: () => setState(() => selected = null),
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      label: const Text('전체'),
+                    ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: panelSoft,
+                      borderRadius: BorderRadius.circular(99),
+                      border: Border.all(color: line),
+                    ),
+                    child: Text('${visible.length} LIVE', style: const TextStyle(color: mint, fontSize: 10, fontWeight: FontWeight.w900)),
+                  ),
                 ],
               ),
             ] else ...[
@@ -1701,25 +1926,51 @@ class _TeamsPageState extends State<TeamsPage> {
                   children: [
                     Icon(Icons.mark_chat_unread_rounded, color: mint),
                     SizedBox(width: 11),
-                    Expanded(child: Text('가입한 파티와 읽지 않은 메시지를 여기서 확인할 수 있어요.', style: TextStyle(color: muted, height: 1.4))),
+                    Expanded(
+                      child: Text(
+                        '가입한 파티와 읽지 않은 메시지를 여기서 확인할 수 있어요.',
+                        style: TextStyle(color: muted, height: 1.4),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
-            const SizedBox(height: 16),
-            if (loading) const Center(child: Padding(padding: EdgeInsets.all(30), child: CircularProgressIndicator(color: mint))),
+            const SizedBox(height: 18),
+            if (loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(36),
+                  child: CircularProgressIndicator(color: mint),
+                ),
+              ),
             if (error != null)
               GlowCard(
                 borderColor: danger.withAlpha(80),
-                child: Text(error!, style: const TextStyle(color: danger)),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud_off_rounded, color: danger),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(error!, style: const TextStyle(color: danger))),
+                  ],
+                ),
               ),
             if (!loading && error == null && visible.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+                padding: const EdgeInsets.symmetric(vertical: 64, horizontal: 24),
                 child: Column(
                   children: [
-                    Icon(widget.mine ? Icons.chat_bubble_outline_rounded : Icons.groups_2_outlined, size: 48, color: muted),
-                    const SizedBox(height: 14),
+                    Container(
+                      width: 76,
+                      height: 76,
+                      decoration: BoxDecoration(
+                        color: purple.withAlpha(20),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: purple.withAlpha(55)),
+                      ),
+                      child: Icon(widget.mine ? Icons.chat_bubble_outline_rounded : Icons.groups_2_outlined, size: 38, color: purpleSoft),
+                    ),
+                    const SizedBox(height: 18),
                     Text(
                       widget.mine
                           ? '아직 참여한 파티가 없어요.\n홈에서 참가하거나 직접 파티를 만들어보세요.'
@@ -1727,22 +1978,18 @@ class _TeamsPageState extends State<TeamsPage> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: muted, height: 1.65),
                     ),
+                    if (!widget.mine && widget.onCreate != null) ...[
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: widget.onCreate,
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('첫 파티 만들기'),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ...visible.asMap().entries.map(
-              (entry) => _Entrance(
-                delay: math.min(entry.key * 35, 220).toInt(),
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: TeamCard(
-                    team: entry.value,
-                    busy: joining == entry.value['id'],
-                    onOpen: () => enter(entry.value),
-                  ),
-                ),
-              ),
-            ),
+            if (!loading && error == null && visible.isNotEmpty) buildPartyGrid(),
           ],
         ),
       ),
@@ -1750,25 +1997,20 @@ class _TeamsPageState extends State<TeamsPage> {
   }
 }
 
-class _HomeHero extends StatefulWidget {
-  final String nickname;
-
-  const _HomeHero({required this.nickname});
+class _LiveDot extends StatefulWidget {
+  const _LiveDot();
 
   @override
-  State<_HomeHero> createState() => _HomeHeroState();
+  State<_LiveDot> createState() => _LiveDotState();
 }
 
-class _HomeHeroState extends State<_HomeHero> with SingleTickerProviderStateMixin {
+class _LiveDotState extends State<_LiveDot> with SingleTickerProviderStateMixin {
   late final AnimationController controller;
 
   @override
   void initState() {
     super.initState();
-    controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat(reverse: true);
+    controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 950))..repeat(reverse: true);
   }
 
   @override
@@ -1781,67 +2023,323 @@ class _HomeHeroState extends State<_HomeHero> with SingleTickerProviderStateMixi
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: controller,
-      builder: (context, _) {
-        final v = Curves.easeInOut.transform(controller.value);
+      builder: (context, _) => Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(
+          color: mint,
+          shape: BoxShape.circle,
+          boxShadow: [BoxShadow(color: mint.withAlpha(70 + (controller.value * 100).round()), blurRadius: 4 + controller.value * 7)],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeGameHero extends StatefulWidget {
+  final String nickname;
+  final Map<String, int> counts;
+  final String? selectedGame;
+  final ValueChanged<String> onSelectGame;
+  final VoidCallback? onCreate;
+
+  const _HomeGameHero({
+    required this.nickname,
+    required this.counts,
+    required this.selectedGame,
+    required this.onSelectGame,
+    this.onCreate,
+  });
+
+  @override
+  State<_HomeGameHero> createState() => _HomeGameHeroState();
+}
+
+class _HomeGameHeroState extends State<_HomeGameHero> with SingleTickerProviderStateMixin {
+  int active = 0;
+  Timer? timer;
+  late final AnimationController motion;
+
+  @override
+  void initState() {
+    super.initState();
+    motion = AnimationController(vsync: this, duration: const Duration(milliseconds: 3600))..repeat();
+    timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) setState(() => active = (active + 1) % games.length);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeGameHero oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedGame != null && widget.selectedGame != oldWidget.selectedGame) {
+      final index = games.indexOf(widget.selectedGame!);
+      if (index >= 0) active = index;
+    }
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    motion.dispose();
+    super.dispose();
+  }
+
+  void choose(int index) {
+    setState(() => active = index);
+    widget.onSelectGame(games[index]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final game = games[active];
+    final accent = gameAccent(game);
+    final partyCount = widget.counts[game] ?? 0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 760;
+        final heroHeight = wide ? 350.0 : 330.0;
         return Container(
-          padding: const EdgeInsets.all(22),
+          height: heroHeight,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment(-1 + v * .25, -1),
-              end: Alignment(1, 1 - v * .25),
-              colors: [
-                purple.withAlpha(95 + (v * 28).round()),
-                const Color(0xFF171B29),
-                mint.withAlpha(28 + (v * 24).round()),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: purple.withAlpha(85 + (v * 35).round())),
+            borderRadius: BorderRadius.circular(30),
             boxShadow: [
-              BoxShadow(
-                color: purple.withAlpha(18 + (v * 18).round()),
-                blurRadius: 30 + v * 12,
-                offset: const Offset(0, 14),
-              ),
+              BoxShadow(color: accent.withAlpha(42), blurRadius: 42, offset: const Offset(0, 20)),
+              const BoxShadow(color: Colors.black45, blurRadius: 28, offset: Offset(0, 18)),
             ],
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: mint,
-                            shape: BoxShape.circle,
-                            boxShadow: [BoxShadow(color: mint.withAlpha(90), blurRadius: 8 + v * 8)],
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        const Text('READY TO PLAY?', style: TextStyle(color: mint, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.4)),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(30),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 650),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: Image.asset(
+                    gameArtwork[game]!,
+                    key: ValueKey(game),
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    filterQuality: FilterQuality.high,
+                  ),
+                ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withAlpha(20),
+                        Colors.black.withAlpha(70),
+                        const Color(0xFF08090D).withAlpha(242),
+                      ],
+                      stops: const [0, .38, 1],
+                    ),
+                  ),
+                ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        const Color(0xFF08090D).withAlpha(wide ? 205 : 170),
+                        const Color(0xFF08090D).withAlpha(25),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text('${widget.nickname}님,\n오늘 누구랑 할까요?', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, height: 1.18)),
-                    const SizedBox(height: 10),
-                    const Text('원하는 게임과 분위기의 파티를 골라 바로 채팅해보세요.', style: TextStyle(color: Color(0xFFB7BDCA), height: 1.5, fontSize: 12)),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Transform.translate(
-                offset: Offset(0, -5 * v),
-                child: Transform.rotate(
-                  angle: (v - .5) * .05,
-                  child: const BrandMark(size: 68, showName: false),
+                AnimatedBuilder(
+                  animation: motion,
+                  builder: (context, _) {
+                    final x = -280 + (constraints.maxWidth + 520) * motion.value;
+                    return Transform.translate(
+                      offset: Offset(x, -30),
+                      child: Transform.rotate(
+                        angle: -.28,
+                        child: Container(
+                          width: 120,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.transparent,
+                                Colors.white.withAlpha(10),
+                                accent.withAlpha(28),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              ),
-            ],
+                Positioned(
+                  left: wide ? 34 : 24,
+                  right: wide ? 34 : 24,
+                  top: wide ? 28 : 22,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(115),
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(color: accent.withAlpha(150)),
+                          boxShadow: [BoxShadow(color: accent.withAlpha(45), blurRadius: 14)],
+                        ),
+                        child: Row(
+                          children: [
+                            const _LiveDot(),
+                            const SizedBox(width: 7),
+                            Text('$partyCount PARTY LIVE', style: TextStyle(color: accent, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .7)),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                        decoration: BoxDecoration(color: Colors.black.withAlpha(110), borderRadius: BorderRadius.circular(99)),
+                        child: Text('${active + 1} / ${games.length}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800)),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  left: wide ? 34 : 24,
+                  right: wide ? (constraints.maxWidth * .35) : 24,
+                  bottom: wide ? 36 : 74,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 360),
+                    child: Column(
+                      key: ValueKey('copy-$game'),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${widget.nickname.isEmpty ? '플레이어' : widget.nickname}님, 오늘은',
+                          style: const TextStyle(color: Color(0xFFD5D9E5), fontSize: 12, fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          gameDisplayName(game),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: wide ? 35 : 27,
+                            height: 1,
+                            fontWeight: FontWeight.w900,
+                            shadows: const [Shadow(color: Colors.black87, blurRadius: 16)],
+                          ),
+                        ),
+                        const SizedBox(height: 9),
+                        Text(
+                          gameTagline(game),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFFD1D5E0), fontSize: 12, height: 1.45),
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 9,
+                          runSpacing: 9,
+                          children: [
+                            FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: accent,
+                                foregroundColor: game == 'League of Legends' || game == '배틀그라운드' || game == 'FC Online' ? bg : Colors.white,
+                                minimumSize: const Size(0, 44),
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                              ),
+                              onPressed: () => widget.onSelectGame(game),
+                              icon: const Icon(Icons.groups_2_rounded, size: 18),
+                              label: const Text('이 게임 파티 보기'),
+                            ),
+                            if (widget.onCreate != null)
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(0, 44),
+                                  backgroundColor: Colors.black.withAlpha(80),
+                                  side: BorderSide(color: Colors.white.withAlpha(70)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 15),
+                                ),
+                                onPressed: widget.onCreate,
+                                icon: const Icon(Icons.add_rounded, size: 18),
+                                label: const Text('파티 만들기'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (wide)
+                  Positioned(
+                    right: 28,
+                    bottom: 30,
+                    child: Row(
+                      children: List.generate(games.length, (index) {
+                        final selected = index == active;
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: InkWell(
+                            onTap: () => choose(index),
+                            borderRadius: BorderRadius.circular(12),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 220),
+                              width: selected ? 62 : 48,
+                              height: selected ? 42 : 36,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: selected ? accent : Colors.white.withAlpha(55), width: selected ? 2 : 1),
+                                image: DecorationImage(image: AssetImage(gameArtwork[games[index]]!), fit: BoxFit.cover),
+                                boxShadow: selected ? [BoxShadow(color: accent.withAlpha(55), blurRadius: 12)] : null,
+                              ),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(10),
+                                  color: selected ? Colors.transparent : Colors.black.withAlpha(55),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                if (!wide)
+                  Positioned(
+                    left: 24,
+                    right: 24,
+                    bottom: 20,
+                    child: Row(
+                      children: List.generate(games.length, (index) {
+                        final selected = index == active;
+                        return Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: index == games.length - 1 ? 0 : 6),
+                            child: InkWell(
+                              onTap: () => choose(index),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                height: 5,
+                                decoration: BoxDecoration(
+                                  color: selected ? accent : Colors.white.withAlpha(55),
+                                  borderRadius: BorderRadius.circular(99),
+                                  boxShadow: selected ? [BoxShadow(color: accent.withAlpha(100), blurRadius: 8)] : null,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -1849,34 +2347,171 @@ class _HomeHeroState extends State<_HomeHero> with SingleTickerProviderStateMixi
   }
 }
 
-class _FilterChip extends StatelessWidget {
-  final String text;
-  final bool selected;
-  final VoidCallback onTap;
+class _GameRail extends StatelessWidget {
+  final Map<String, int> counts;
+  final String? selectedGame;
+  final ValueChanged<String> onSelect;
+  final VoidCallback onClear;
+  final bool compact;
 
-  const _FilterChip({required this.text, required this.selected, required this.onTap});
+  const _GameRail({
+    required this.counts,
+    required this.selectedGame,
+    required this.onSelect,
+    required this.onClear,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? purple.withAlpha(45) : panel,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: selected ? purple : line),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!compact)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                const Text('게임 바로가기', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                const SizedBox(width: 8),
+                const Text('PICK YOUR GAME', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+                const Spacer(),
+                if (selectedGame != null)
+                  TextButton(onPressed: onClear, child: const Text('전체 보기')),
+              ],
+            ),
           ),
-          child: Text(
-            text,
-            style: TextStyle(
-              color: selected ? Colors.white : muted,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-              fontSize: 12,
+        SizedBox(
+          height: compact ? 106 : 132,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: games.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final game = games[index];
+              return _GamePosterCard(
+                game: game,
+                count: counts[game] ?? 0,
+                selected: selectedGame == game,
+                compact: compact,
+                onTap: () => onSelect(game),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GamePosterCard extends StatefulWidget {
+  final String game;
+  final int count;
+  final bool selected;
+  final bool compact;
+  final VoidCallback onTap;
+
+  const _GamePosterCard({
+    required this.game,
+    required this.count,
+    required this.selected,
+    required this.compact,
+    required this.onTap,
+  });
+
+  @override
+  State<_GamePosterCard> createState() => _GamePosterCardState();
+}
+
+class _GamePosterCardState extends State<_GamePosterCard> {
+  bool hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = gameAccent(widget.game);
+    final width = widget.compact ? 165.0 : 215.0;
+    return MouseRegion(
+      onEnter: (_) => setState(() => hover = true),
+      onExit: (_) => setState(() => hover = false),
+      child: AnimatedScale(
+        scale: hover ? 1.025 : 1,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutBack,
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: width,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: widget.selected ? accent : hover ? accent.withAlpha(130) : line, width: widget.selected ? 2 : 1),
+              boxShadow: [
+                BoxShadow(
+                  color: widget.selected || hover ? accent.withAlpha(40) : Colors.black26,
+                  blurRadius: widget.selected || hover ? 22 : 14,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(19),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  AnimatedScale(
+                    scale: hover ? 1.06 : 1,
+                    duration: const Duration(milliseconds: 350),
+                    curve: Curves.easeOutCubic,
+                    child: Image.asset(gameArtwork[widget.game]!, fit: BoxFit.cover, filterQuality: FilterQuality.high),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withAlpha(60), Colors.black.withAlpha(225)],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.black.withAlpha(125), borderRadius: BorderRadius.circular(99)),
+                      child: Text('${widget.count} LIVE', style: TextStyle(color: accent, fontSize: 8.5, fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 11,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          gameDisplayName(widget.game),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: widget.compact ? 12 : 14, fontWeight: FontWeight.w900, shadows: const [Shadow(color: Colors.black, blurRadius: 8)]),
+                        ),
+                        if (!widget.compact) ...[
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              Container(width: 5, height: 5, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+                              const SizedBox(width: 5),
+                              Text(widget.selected ? '선택됨' : '파티 찾기', style: TextStyle(color: widget.selected ? accent : const Color(0xFFD0D4DF), fontSize: 9.5, fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1885,7 +2520,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class TeamCard extends StatelessWidget {
+class TeamCard extends StatefulWidget {
   final Map<String, dynamic> team;
   final bool busy;
   final VoidCallback onOpen;
@@ -1893,7 +2528,15 @@ class TeamCard extends StatelessWidget {
   const TeamCard({super.key, required this.team, required this.busy, required this.onOpen});
 
   @override
+  State<TeamCard> createState() => _TeamCardState();
+}
+
+class _TeamCardState extends State<TeamCard> {
+  bool hover = false;
+
+  @override
   Widget build(BuildContext context) {
+    final team = widget.team;
     final count = (team['memberCount'] as num?)?.toInt() ?? 0;
     final capacity = (team['capacity'] as num?)?.toInt() ?? 0;
     final full = count >= capacity;
@@ -1901,115 +2544,338 @@ class TeamCard extends StatelessWidget {
     final isOwner = team['isOwner'] == true;
     final unread = (team['unreadCount'] as num?)?.toInt() ?? 0;
     final isPrivate = team['isPrivate'] == true;
+    final game = '${team['game']}';
+    final artwork = gameArtwork[game] ?? gameArtwork.values.first;
+    final accent = gameAccent(game);
 
-    return GlowCard(
-      borderColor: joined ? purple.withAlpha(85) : line,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: purple.withAlpha(30),
-                  borderRadius: BorderRadius.circular(15),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 430;
+        final cardRadius = compact ? 22.0 : 24.0;
+        // Mobile party cards use a true 16:9 artwork area so game key art
+        // is not crushed into a shallow banner after creating/joining a party.
+        // Desktop keeps the compact launcher-style strip.
+        final imageHeight = compact
+            ? constraints.maxWidth * 9 / 16
+            : 108.0;
+
+        return MouseRegion(
+          onEnter: compact ? null : (_) => setState(() => hover = true),
+          onExit: compact ? null : (_) => setState(() => hover = false),
+          child: AnimatedScale(
+            scale: !compact && hover ? 1.012 : 1,
+            duration: const Duration(milliseconds: 190),
+            curve: Curves.easeOutBack,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              decoration: BoxDecoration(
+                color: panel,
+                borderRadius: BorderRadius.circular(cardRadius),
+                border: Border.all(
+                  color: joined
+                      ? purple.withAlpha(125)
+                      : hover
+                          ? accent.withAlpha(125)
+                          : line,
                 ),
-                child: const Icon(Icons.sports_esports_rounded, color: purpleSoft),
+                boxShadow: [
+                  BoxShadow(
+                    color: hover ? accent.withAlpha(28) : Colors.black26,
+                    blurRadius: hover ? 30 : compact ? 18 : 18,
+                    offset: Offset(0, hover ? 14 : compact ? 8 : 9),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(cardRadius - 1),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${team['title']}',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, height: 1.3),
+                    SizedBox(
+                      height: imageHeight,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          AnimatedScale(
+                            scale: !compact && hover ? 1.055 : 1,
+                            duration: const Duration(milliseconds: 420),
+                            curve: Curves.easeOutCubic,
+                            child: Image.asset(
+                              artwork,
+                              fit: BoxFit.cover,
+                              alignment: Alignment.center,
+                              filterQuality: FilterQuality.high,
+                            ),
                           ),
-                        ),
-                        if (unread > 0) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                            padding: const EdgeInsets.symmetric(horizontal: 7),
-                            alignment: Alignment.center,
-                            decoration: const BoxDecoration(color: danger, shape: BoxShape.circle),
-                            child: Text('$unread', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900)),
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.black.withAlpha(6),
+                                  Colors.black.withAlpha(compact ? 20 : 75),
+                                  panel.withAlpha(compact ? 170 : 245),
+                                ],
+                                stops: compact
+                                    ? const [0, .72, 1]
+                                    : const [0, .50, 1],
+                              ),
+                            ),
                           ),
+                          Positioned(
+                            left: compact ? 13 : 14,
+                            top: compact ? 12 : 13,
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: compact ? 9 : 9,
+                                vertical: compact ? 5 : 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withAlpha(135),
+                                borderRadius: BorderRadius.circular(99),
+                                border: Border.all(color: accent.withAlpha(110)),
+                              ),
+                              child: Text(
+                                gameDisplayName(game),
+                                style: TextStyle(
+                                  color: accent,
+                                  fontSize: compact ? 10 : 9.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: compact ? 12 : 13,
+                            top: compact ? 12 : 13,
+                            child: Row(
+                              children: [
+                                if (isPrivate)
+                                  Container(
+                                    width: compact ? 31 : 30,
+                                    height: compact ? 31 : 30,
+                                    margin: const EdgeInsets.only(right: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withAlpha(145),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.lock_rounded,
+                                      color: warning,
+                                      size: compact ? 15 : 15,
+                                    ),
+                                  ),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: compact ? 9 : 8,
+                                    vertical: compact ? 5 : 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withAlpha(145),
+                                    borderRadius: BorderRadius.circular(99),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: const BoxDecoration(
+                                          color: mint,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        '$count/$capacity',
+                                        style: TextStyle(
+                                          fontSize: compact ? 10 : 9,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (unread > 0)
+                            Positioned(
+                              right: compact ? 12 : 13,
+                              bottom: compact ? 10 : 12,
+                              child: Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: compact ? 9 : 9,
+                                  vertical: compact ? 5 : 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: danger,
+                                  borderRadius: BorderRadius.circular(99),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: danger.withAlpha(80),
+                                      blurRadius: 12,
+                                    ),
+                                  ],
+                                ),
+                                child: Text(
+                                  compact ? '$unread 새 메시지' : '새 메시지 $unread',
+                                  style: TextStyle(
+                                    fontSize: compact ? 10 : 9,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 7),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        _MiniBadge(text: '${team['game']}', color: purpleSoft),
-                        _MiniBadge(text: '${team['mode']}', color: mint),
-                        _MiniBadge(text: '$count/$capacity', color: warning),
-                        _MiniBadge(text: isPrivate ? '비공개' : '공개', color: isPrivate ? danger : const Color(0xFF73A7FF)),
-                        if (isOwner && isPrivate && team['accessCode'] != null)
-                          _MiniBadge(text: '코드 ${team['accessCode']}', color: warning),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              Avatar(team['ownerAvatar'], radius: 16),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        '${team['ownerName']}',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
-                    const SizedBox(width: 5),
-                    const Icon(Icons.workspace_premium_rounded, color: warning, size: 16),
-                    if (isOwner) ...[
-                      const SizedBox(width: 6),
-                      const _MiniBadge(text: '내 파티', color: mint),
-                    ],
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        compact ? 15 : 16,
+                        compact ? 12 : 8,
+                        compact ? 15 : 16,
+                        compact ? 15 : 14,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${team['title']}',
+                            maxLines: compact ? 1 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: compact ? 18 : 17,
+                              fontWeight: FontWeight.w900,
+                              height: compact ? 1.25 : 1.3,
+                            ),
+                          ),
+                          SizedBox(height: compact ? 10 : 9),
+                          Wrap(
+                            spacing: compact ? 7 : 6,
+                            runSpacing: compact ? 7 : 6,
+                            children: [
+                              _MiniBadge(text: '${team['mode']}', color: accent, compact: compact),
+                              if (!compact) _MiniBadge(text: '${team['style']}', color: purpleSoft),
+                              _MiniBadge(
+                                text: team['mic'] == true ? 'MIC ON' : 'MIC OFF',
+                                color: team['mic'] == true ? mint : muted,
+                                compact: compact,
+                              ),
+                              _MiniBadge(
+                                text: isPrivate ? '비공개' : '공개',
+                                color: isPrivate ? warning : const Color(0xFF73A7FF),
+                                compact: compact,
+                              ),
+                              if (isOwner && isPrivate && team['accessCode'] != null)
+                                _MiniBadge(
+                                  text: 'CODE ${team['accessCode']}',
+                                  color: warning,
+                                  compact: compact,
+                                ),
+                            ],
+                          ),
+                          SizedBox(height: compact ? 13 : 14),
+                          Row(
+                            children: [
+                              Avatar(team['ownerAvatar'], radius: compact ? 16 : 16),
+                              SizedBox(width: compact ? 9 : 9),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        '${team['ownerName']}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: compact ? 14 : null,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      Icons.workspace_premium_rounded,
+                                      color: warning,
+                                      size: compact ? 16 : 16,
+                                    ),
+                                    if (isOwner) ...[
+                                      const SizedBox(width: 5),
+                                      _MiniBadge(text: '내 파티', color: mint, compact: true),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                Icons.people_alt_rounded,
+                                color: accent,
+                                size: compact ? 17 : 17,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '$count/$capacity',
+                                style: TextStyle(
+                                  color: muted,
+                                  fontSize: compact ? 11.5 : 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: compact ? 13 : 12),
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: joined ? purple : accent.withAlpha(215),
+                              foregroundColor: game == 'League of Legends' ||
+                                      game == '배틀그라운드' ||
+                                      game == 'FC Online'
+                                  ? bg
+                                  : Colors.white,
+                              minimumSize: Size(0, compact ? 48 : 44),
+                              padding: EdgeInsets.symmetric(
+                                horizontal: compact ? 14 : 16,
+                                vertical: compact ? 10 : 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(compact ? 14 : 14),
+                              ),
+                            ),
+                            onPressed: widget.busy || (full && !joined) ? null : widget.onOpen,
+                            icon: Icon(
+                              joined
+                                  ? Icons.chat_bubble_rounded
+                                  : isPrivate
+                                      ? Icons.lock_open_rounded
+                                      : Icons.flash_on_rounded,
+                              size: compact ? 18 : 18,
+                            ),
+                            label: Text(
+                              widget.busy
+                                  ? '연결 중…'
+                                  : joined
+                                      ? '채팅 바로가기'
+                                      : full
+                                          ? '모집 완료'
+                                          : '지금 참가하기',
+                              style: TextStyle(
+                                fontSize: compact ? 14 : null,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Text(
-                '${team['style']} · ${team['mic'] == true ? 'MIC ON' : 'MIC OFF'}',
-                style: const TextStyle(color: muted, fontSize: 11),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: busy || (full && !joined) ? null : onOpen,
-            icon: Icon(joined ? Icons.chat_bubble_rounded : isPrivate ? Icons.lock_open_rounded : Icons.login_rounded, size: 19),
-            label: Text(
-              busy
-                  ? '연결 중…'
-                  : joined
-                      ? '채팅 열기'
-                      : full
-                          ? '모집 완료'
-                          : '참가하고 채팅하기',
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -2017,19 +2883,118 @@ class TeamCard extends StatelessWidget {
 class _MiniBadge extends StatelessWidget {
   final String text;
   final Color color;
+  final bool compact;
 
-  const _MiniBadge({required this.text, required this.color});
+  const _MiniBadge({required this.text, required this.color, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 8,
+        vertical: compact ? 5 : 5,
+      ),
       decoration: BoxDecoration(
         color: color.withAlpha(22),
-        borderRadius: BorderRadius.circular(9),
+        borderRadius: BorderRadius.circular(compact ? 9 : 9),
         border: Border.all(color: color.withAlpha(70)),
       ),
-      child: Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800)),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color,
+          fontSize: compact ? 10.5 : 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _CreateGameTile extends StatefulWidget {
+  final String game;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _CreateGameTile({required this.game, required this.selected, required this.onTap});
+
+  @override
+  State<_CreateGameTile> createState() => _CreateGameTileState();
+}
+
+class _CreateGameTileState extends State<_CreateGameTile> {
+  bool hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = gameAccent(widget.game);
+    return MouseRegion(
+      onEnter: (_) => setState(() => hover = true),
+      onExit: (_) => setState(() => hover = false),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 170),
+        curve: Curves.easeOutBack,
+        scale: hover ? 1.025 : 1,
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 190),
+            width: 142,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: widget.selected ? accent : hover ? accent.withAlpha(120) : line, width: widget.selected ? 2 : 1),
+              boxShadow: widget.selected || hover
+                  ? [BoxShadow(color: accent.withAlpha(34), blurRadius: 17, offset: const Offset(0, 7))]
+                  : null,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(15),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(gameArtwork[widget.game]!, fit: BoxFit.cover, filterQuality: FilterQuality.high),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black.withAlpha(205)],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 9,
+                    right: 9,
+                    bottom: 8,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            gameDisplayName(widget.game),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        if (widget.selected)
+                          Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                            child: const Icon(Icons.check_rounded, size: 12, color: bg),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2103,41 +3068,96 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 34),
         children: [
           Container(
-            padding: const EdgeInsets.all(20),
+            height: 158,
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [purple.withAlpha(85), panel]),
               borderRadius: BorderRadius.circular(26),
-              border: Border.all(color: purple.withAlpha(80)),
+              border: Border.all(color: gameAccent(game).withAlpha(120)),
+              boxShadow: [BoxShadow(color: gameAccent(game).withAlpha(34), blurRadius: 26, offset: const Offset(0, 12))],
             ),
-            child: const Row(
-              children: [
-                Icon(Icons.workspace_premium_rounded, color: warning, size: 34),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('내가 방장이 됩니다', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                      SizedBox(height: 5),
-                      Text('파티원 확인, 추방, 파티 삭제 권한이 방장에게 주어집니다.', style: TextStyle(color: muted, height: 1.45, fontSize: 12)),
-                    ],
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(25),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 360),
+                    child: Image.asset(
+                      gameArtwork[game]!,
+                      key: ValueKey('create-$game'),
+                      fit: BoxFit.cover,
+                      filterQuality: FilterQuality.high,
+                    ),
                   ),
-                ),
-              ],
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black.withAlpha(25), Colors.black.withAlpha(90), panel.withAlpha(245)],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 18,
+                    top: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(125),
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(color: warning.withAlpha(120)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.workspace_premium_rounded, color: warning, size: 15),
+                          SizedBox(width: 6),
+                          Text('HOST MODE', style: TextStyle(color: warning, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: .8)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 18,
+                    right: 18,
+                    bottom: 16,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(gameDisplayName(game), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 4),
+                        const Text('내가 방장이 되어 멤버 관리 · 추방 · 파티 삭제 권한을 가집니다.', style: TextStyle(color: Color(0xFFD2D6E0), height: 1.4, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 18),
           _FormSection(
             title: '게임 & 모드',
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                DropdownButtonFormField<String>(
-                  initialValue: game,
-                  decoration: const InputDecoration(labelText: '게임'),
-                  items: games.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
-                  onChanged: (v) => setState(() => game = v!),
+                const Text('게임 선택', style: TextStyle(color: muted, fontSize: 11, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 9),
+                SizedBox(
+                  height: 102,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: games.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final item = games[index];
+                      return _CreateGameTile(
+                        game: item,
+                        selected: game == item,
+                        onTap: () => setState(() => game = item),
+                      );
+                    },
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
                   initialValue: mode,
                   decoration: const InputDecoration(labelText: '모드'),
