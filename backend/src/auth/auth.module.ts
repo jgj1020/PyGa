@@ -1,20 +1,23 @@
-import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { UsersModule } from '../users/users.module.js';
-import { AuthController } from './auth.controller.js';
-import { AuthService } from './auth.service.js';
-
+import { Module } from "@nestjs/common";
+import { JwtModule } from "@nestjs/jwt";
+import { UsersModule } from "../users/users.module.js";
+import { AuthController } from "./auth.controller.js";
+import { AuthService } from "./auth.service.js";
+import { SessionGuard } from "./session.guard.js";
 @Module({
   imports: [
     UsersModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'pyga-development-secret',
-      signOptions: {
-        expiresIn: '7d',
+    JwtModule.registerAsync({
+      useFactory: () => {
+        const secret = process.env.JWT_SECRET;
+        if (!secret || secret.length < 32)
+          throw new Error("JWT_SECRET must have at least 32 characters");
+        return { secret, signOptions: { expiresIn: "1d" } };
       },
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [AuthService, SessionGuard],
+  exports: [JwtModule, SessionGuard],
 })
 export class AuthModule {}

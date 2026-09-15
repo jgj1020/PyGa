@@ -1,13 +1,14 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
-} from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { UsersService } from '../users/users.service.js';
-import { RegisterDto } from './dto/register.dto.js';
-import { LoginDto } from './dto/login.dto.js';
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import * as bcrypt from "bcrypt";
+import { UsersService } from "../users/users.service.js";
+import { RegisterDto } from "./dto/register.dto.js";
+import { LoginDto } from "./dto/login.dto.js";
 
 @Injectable()
 export class AuthService {
@@ -18,11 +19,16 @@ export class AuthService {
 
   async register(registerDto: RegisterDto) {
     const { nickname, email, password } = registerDto;
+    if (Buffer.byteLength(password, "utf8") > 72) {
+      throw new BadRequestException(
+        "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
+      );
+    }
 
     const existingUser = await this.usersService.findByEmail(email);
 
     if (existingUser) {
-      throw new ConflictException('이미 가입된 이메일입니다.');
+      throw new ConflictException("이미 가입된 이메일입니다.");
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -34,7 +40,7 @@ export class AuthService {
     );
 
     return {
-      message: '회원가입이 완료되었습니다.',
+      message: "회원가입이 완료되었습니다.",
       user: {
         id: user.id,
         nickname: user.nickname,
@@ -46,17 +52,26 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
+    if (Buffer.byteLength(password, "utf8") > 72) {
+      throw new BadRequestException(
+        "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
+      );
+    }
 
     const user = await this.usersService.findByEmail(email);
 
     if (!user) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+      throw new UnauthorizedException(
+        "이메일 또는 비밀번호가 올바르지 않습니다.",
+      );
     }
 
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+      throw new UnauthorizedException(
+        "이메일 또는 비밀번호가 올바르지 않습니다.",
+      );
     }
 
     const payload = {
@@ -67,7 +82,7 @@ export class AuthService {
     const accessToken = await this.jwtService.signAsync(payload);
 
     return {
-      message: '로그인되었습니다.',
+      message: "로그인되었습니다.",
       accessToken,
       user: {
         id: user.id,

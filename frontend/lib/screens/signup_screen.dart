@@ -57,7 +57,7 @@ class _SignupScreenState extends State<SignupScreen> {
           padding: const EdgeInsets.fromLTRB(24, 10, 24, 30),
           children: [
             const Text(
-              'GameMatch 시작하기',
+              'PyGa 시작하기',
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w900,
