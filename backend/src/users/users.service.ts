@@ -13,7 +13,18 @@ export class UsersService {
   findByEmail(email: string): Promise<User | null> {
     return this.usersRepository
       .createQueryBuilder("u")
-      .where("lower(u.email) = lower(:email)", { email: email.trim() })
+      .where("lower(trim(u.email)) = lower(trim(:email))", {
+        email: email.trim(),
+      })
+      .getOne();
+  }
+
+  findByNickname(nickname: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder("u")
+      .where("lower(trim(u.nickname)) = lower(trim(:nickname))", {
+        nickname: nickname.trim(),
+      })
       .getOne();
   }
 
@@ -26,13 +37,17 @@ export class UsersService {
     email: string,
     password: string,
   ): Promise<User> {
+    const cleanNickname = nickname.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+
     const user = this.usersRepository.create({
-      nickname,
-      email,
+      nickname: cleanNickname,
+      email: cleanEmail,
       password,
-      isAdmin: adminEmail != null && email.trim().toLowerCase() === adminEmail,
+      isAdmin: adminEmail != null && cleanEmail === adminEmail,
     });
+
     return this.usersRepository.save(user);
   }
 }

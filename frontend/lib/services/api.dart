@@ -125,7 +125,7 @@ class Api {
     user = {};
     final result = await request('POST', '/auth/register', {
       'nickname': nickname.trim(),
-      'email': email.trim(),
+      'email': email.trim().toLowerCase(),
       'password': password,
     });
     token = result['accessToken'] as String;
@@ -136,7 +136,7 @@ class Api {
     token = null;
     user = {};
     final result = await request('POST', '/auth/login', {
-      'email': email.trim(),
+      'email': email.trim().toLowerCase(),
       'password': password,
     });
     token = result['accessToken'] as String;
@@ -147,7 +147,7 @@ class Api {
     token = null;
     user = {};
     final result = await request('POST', '/auth/admin/login', {
-      'email': email.trim(),
+      'email': email.trim().toLowerCase(),
       'password': password,
     });
     token = result['accessToken'] as String;

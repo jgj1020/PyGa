@@ -21,56 +21,113 @@ export class AuthService {
     private readonly maintenance: MaintenanceService,
   ) {}
 
-
   private async assertServiceAvailable() {
     const status = await this.maintenance.status();
     if (status.active) {
       throw new ForbiddenException(
-        status.message ?? "현재 PyGa 점검 중입니다. 점검 종료 후 다시 이용해주세요.",
+        status.message ??
+          "현재 PyGa 점검 중입니다. 점검 종료 후 다시 이용해주세요.",
       );
     }
   }
 
   private assertNotSuspended(user: any) {
-    const reason = user.suspensionReason ? ` 사유: ${user.suspensionReason}` : "";
+    const reason = user.suspensionReason
+      ? ` 사유: ${user.suspensionReason}`
+      : "";
+
     if (user.suspensionPermanent) {
       throw new ForbiddenException(`영구 정지된 계정입니다.${reason}`);
     }
-    if (user.suspendedUntil && new Date(user.suspendedUntil).getTime() > Date.now()) {
+
+    if (
+      user.suspendedUntil &&
+      new Date(user.suspendedUntil).getTime() > Date.now()
+    ) {
       const until = new Date(user.suspendedUntil).toLocaleString("ko-KR");
-      throw new ForbiddenException(`이 계정은 ${until}까지 이용 정지 상태입니다.${reason}`);
+      throw new ForbiddenException(
+        `이 계정은 ${until}까지 이용 정지 상태입니다.${reason}`,
+      );
     }
+  }
+
+  private duplicateCode(error: any): string | undefined {
+    return error?.code ?? error?.driverError?.code;
+  }
+
+  private duplicateDetail(error: any): string {
+    return String(
+      error?.detail ??
+        error?.driverError?.detail ??
+        error?.constraint ??
+        error?.driverError?.constraint ??
+        "",
+    ).toLowerCase();
+  }
+
+  private throwDuplicateError(error: any): never {
+    const detail = this.duplicateDetail(error);
+
+    if (detail.includes("email")) {
+      throw new ConflictException("이미 가입된 이메일입니다.");
+    }
+
+    if (detail.includes("nickname")) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
+
+    throw new ConflictException(
+      "이미 사용 중인 이메일 또는 닉네임입니다.",
+    );
   }
 
   async register(registerDto: RegisterDto) {
     await this.assertServiceAvailable();
-    const { nickname, password } = registerDto;
+
+    const nickname = registerDto.nickname.trim();
     const email = registerDto.email.trim().toLowerCase();
+    const { password } = registerDto;
+
     if (Buffer.byteLength(password, "utf8") > 72) {
       throw new BadRequestException(
         "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
       );
     }
 
-    // DB 중복 확인과 bcrypt 계산을 병렬로 진행해 정상 가입 체감 시간을 줄입니다.
-    const [existingUser, hashedPassword] = await Promise.all([
-      this.usersService.findByEmail(email),
-      bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS ?? 10)),
-    ]);
-    if (existingUser) {
+    const [existingEmail, existingNickname, hashedPassword] =
+      await Promise.all([
+        this.usersService.findByEmail(email),
+        this.usersService.findByNickname(nickname),
+        bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS ?? 10)),
+      ]);
+
+    if (existingEmail) {
       throw new ConflictException("이미 가입된 이메일입니다.");
     }
 
-    const user = await this.usersService.createUser(
-      nickname,
-      email,
-      hashedPassword,
-    );
+    if (existingNickname) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
 
-    communityEvents.emit("admin:update", { type: "user_created", userId: user.id });
+    let user;
+    try {
+      user = await this.usersService.createUser(
+        nickname,
+        email,
+        hashedPassword,
+      );
+    } catch (error: any) {
+      if (this.duplicateCode(error) === "23505") {
+        this.throwDuplicateError(error);
+      }
+      throw error;
+    }
 
-    // 가입 직후 바로 사용할 수 있도록 토큰을 함께 발급합니다.
-    // 별도의 로그인 왕복/비밀번호 비교가 사라져 가입 체감 시간을 줄입니다.
+    communityEvents.emit("admin:update", {
+      type: "user_created",
+      userId: user.id,
+    });
+
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,
       email: user.email,
@@ -93,6 +150,7 @@ export class AuthService {
   private async validate(loginDto: LoginDto) {
     const email = loginDto.email.trim().toLowerCase();
     const { password } = loginDto;
+
     if (Buffer.byteLength(password, "utf8") > 72) {
       throw new BadRequestException(
         "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
@@ -100,11 +158,13 @@ export class AuthService {
     }
 
     const user = await this.usersService.findByEmail(email);
+
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new UnauthorizedException(
         "이메일 또는 비밀번호가 올바르지 않습니다.",
       );
     }
+
     this.assertNotSuspended(user);
     return user;
   }
@@ -112,6 +172,7 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     await this.assertServiceAvailable();
     const user = await this.validate(loginDto);
+
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,
       email: user.email,
@@ -132,6 +193,7 @@ export class AuthService {
 
   async adminLogin(loginDto: LoginDto) {
     const user = await this.validate(loginDto);
+
     if (!user.isAdmin) {
       throw new ForbiddenException("관리자 계정만 로그인할 수 있습니다.");
     }

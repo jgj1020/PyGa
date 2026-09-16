@@ -1,3 +1,1498 @@
+
+
+===== backend/src/users/users.service.ts =====
+
+import { Injectable } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+import { User } from "./user.entity.js";
+
+@Injectable()
+export class UsersService {
+  constructor(
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
+  ) {}
+
+  findByEmail(email: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder("u")
+      .where("lower(trim(u.email)) = lower(trim(:email))", {
+        email: email.trim(),
+      })
+      .getOne();
+  }
+
+  findByNickname(nickname: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder("u")
+      .where("lower(trim(u.nickname)) = lower(trim(:nickname))", {
+        nickname: nickname.trim(),
+      })
+      .getOne();
+  }
+
+  findById(id: number): Promise<User | null> {
+    return this.usersRepository.findOne({ where: { id } });
+  }
+
+  async createUser(
+    nickname: string,
+    email: string,
+    password: string,
+  ): Promise<User> {
+    const cleanNickname = nickname.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+
+    const user = this.usersRepository.create({
+      nickname: cleanNickname,
+      email: cleanEmail,
+      password,
+      isAdmin: adminEmail != null && cleanEmail === adminEmail,
+    });
+
+    return this.usersRepository.save(user);
+  }
+}
+
+
+===== backend/src/auth/auth.service.ts =====
+
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import * as bcrypt from "bcrypt";
+import { UsersService } from "../users/users.service.js";
+import { RegisterDto } from "./dto/register.dto.js";
+import { LoginDto } from "./dto/login.dto.js";
+import { communityEvents } from "../community/events.js";
+import { MaintenanceService } from "../maintenance/maintenance.service.js";
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
+    private readonly maintenance: MaintenanceService,
+  ) {}
+
+  private async assertServiceAvailable() {
+    const status = await this.maintenance.status();
+    if (status.active) {
+      throw new ForbiddenException(
+        status.message ??
+          "현재 PyGa 점검 중입니다. 점검 종료 후 다시 이용해주세요.",
+      );
+    }
+  }
+
+  private assertNotSuspended(user: any) {
+    const reason = user.suspensionReason
+      ? ` 사유: ${user.suspensionReason}`
+      : "";
+
+    if (user.suspensionPermanent) {
+      throw new ForbiddenException(`영구 정지된 계정입니다.${reason}`);
+    }
+
+    if (
+      user.suspendedUntil &&
+      new Date(user.suspendedUntil).getTime() > Date.now()
+    ) {
+      const until = new Date(user.suspendedUntil).toLocaleString("ko-KR");
+      throw new ForbiddenException(
+        `이 계정은 ${until}까지 이용 정지 상태입니다.${reason}`,
+      );
+    }
+  }
+
+  private duplicateCode(error: any): string | undefined {
+    return error?.code ?? error?.driverError?.code;
+  }
+
+  private duplicateDetail(error: any): string {
+    return String(
+      error?.detail ??
+        error?.driverError?.detail ??
+        error?.constraint ??
+        error?.driverError?.constraint ??
+        "",
+    ).toLowerCase();
+  }
+
+  private throwDuplicateError(error: any): never {
+    const detail = this.duplicateDetail(error);
+
+    if (detail.includes("email")) {
+      throw new ConflictException("이미 가입된 이메일입니다.");
+    }
+
+    if (detail.includes("nickname")) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
+
+    throw new ConflictException(
+      "이미 사용 중인 이메일 또는 닉네임입니다.",
+    );
+  }
+
+  async register(registerDto: RegisterDto) {
+    await this.assertServiceAvailable();
+
+    const nickname = registerDto.nickname.trim();
+    const email = registerDto.email.trim().toLowerCase();
+    const { password } = registerDto;
+
+    if (Buffer.byteLength(password, "utf8") > 72) {
+      throw new BadRequestException(
+        "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
+      );
+    }
+
+    const [existingEmail, existingNickname, hashedPassword] =
+      await Promise.all([
+        this.usersService.findByEmail(email),
+        this.usersService.findByNickname(nickname),
+        bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS ?? 10)),
+      ]);
+
+    if (existingEmail) {
+      throw new ConflictException("이미 가입된 이메일입니다.");
+    }
+
+    if (existingNickname) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
+
+    let user;
+    try {
+      user = await this.usersService.createUser(
+        nickname,
+        email,
+        hashedPassword,
+      );
+    } catch (error: any) {
+      if (this.duplicateCode(error) === "23505") {
+        this.throwDuplicateError(error);
+      }
+      throw error;
+    }
+
+    communityEvents.emit("admin:update", {
+      type: "user_created",
+      userId: user.id,
+    });
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      email: user.email,
+    });
+
+    return {
+      message: "회원가입이 완료되었습니다.",
+      accessToken,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        avatar: user.avatar ?? null,
+        isAdmin: user.isAdmin ?? false,
+        createdAt: user.createdAt,
+      },
+    };
+  }
+
+  private async validate(loginDto: LoginDto) {
+    const email = loginDto.email.trim().toLowerCase();
+    const { password } = loginDto;
+
+    if (Buffer.byteLength(password, "utf8") > 72) {
+      throw new BadRequestException(
+        "비밀번호는 UTF-8 기준 72바이트 이내로 입력해주세요.",
+      );
+    }
+
+    const user = await this.usersService.findByEmail(email);
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new UnauthorizedException(
+        "이메일 또는 비밀번호가 올바르지 않습니다.",
+      );
+    }
+
+    this.assertNotSuspended(user);
+    return user;
+  }
+
+  async login(loginDto: LoginDto) {
+    await this.assertServiceAvailable();
+    const user = await this.validate(loginDto);
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      email: user.email,
+    });
+
+    return {
+      message: "로그인되었습니다.",
+      accessToken,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        avatar: user.avatar,
+        isAdmin: user.isAdmin,
+      },
+    };
+  }
+
+  async adminLogin(loginDto: LoginDto) {
+    const user = await this.validate(loginDto);
+
+    if (!user.isAdmin) {
+      throw new ForbiddenException("관리자 계정만 로그인할 수 있습니다.");
+    }
+
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      email: user.email,
+      admin: true,
+    });
+
+    return {
+      message: "관리자 로그인되었습니다.",
+      accessToken,
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        email: user.email,
+        isAdmin: true,
+      },
+    };
+  }
+}
+
+
+===== backend/src/community/community.service.ts =====
+
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { DataSource } from "typeorm";
+import sharp from "sharp";
+import { communityEvents } from "./events.js";
+
+export function positiveId(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new BadRequestException("잘못된 번호입니다.");
+  }
+  return n;
+}
+
+export function boundedText(value: unknown, max: number, min = 1): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length < min ||
+    value.trim().length > max
+  ) {
+    throw new BadRequestException(`${min}~${max}자로 입력해주세요.`);
+  }
+  return value.trim();
+}
+
+@Injectable()
+export class CommunityService {
+  constructor(private readonly db: DataSource) {}
+
+  async me(uid: number) {
+    const [u] = await this.db.query(
+      `SELECT id,nickname,email,avatar,is_admin AS "isAdmin","createdAt",
+        suspended_until AS "suspendedUntil",
+        suspension_permanent AS "suspensionPermanent"
+       FROM users WHERE id=$1`,
+      [uid],
+    );
+    if (!u) throw new NotFoundException();
+    return u;
+  }
+
+  async profile(uid: number, data: any) {
+    const nickname = boundedText(data.nickname, 30, 2);
+    let avatar: string | null | undefined;
+
+    const [nicknameOwner] = await this.db.query(
+      `SELECT id
+       FROM users
+       WHERE id<>$1 AND lower(trim(nickname))=lower(trim($2))
+       LIMIT 1`,
+      [uid, nickname],
+    );
+
+    if (nicknameOwner) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
+
+    if (data.avatar === null) avatar = null;
+    else if (data.avatar !== undefined) {
+      if (
+        typeof data.avatar !== "string" ||
+        data.avatar.length > 2800000 ||
+        !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(
+          data.avatar,
+        )
+      ) {
+        throw new BadRequestException(
+          "2MB 이하 PNG/JPEG/WebP 사진을 선택해주세요.",
+        );
+      }
+
+      try {
+        const input = Buffer.from(data.avatar.split(",")[1], "base64");
+        if (input.length > 2 * 1024 * 1024) throw new Error();
+
+        const photo = await sharp(input, { limitInputPixels: 16000000 })
+          .rotate()
+          .resize(192, 192, { fit: "cover" })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+
+        avatar = "data:image/jpeg;base64," + photo.toString("base64");
+      } catch {
+        throw new BadRequestException(
+          "사진을 읽을 수 없습니다. 작은 PNG/JPEG/WebP 사진으로 다시 시도해주세요.",
+        );
+      }
+    }
+
+    try {
+      if (avatar === undefined) {
+        await this.db.query("UPDATE users SET nickname=$2 WHERE id=$1", [
+          uid,
+          nickname,
+        ]);
+      } else {
+        await this.db.query(
+          "UPDATE users SET nickname=$2,avatar=$3 WHERE id=$1",
+          [uid, nickname, avatar],
+        );
+      }
+    } catch (error: any) {
+      const code = error?.code ?? error?.driverError?.code;
+      if (code === "23505") {
+        throw new ConflictException("이미 사용 중인 닉네임입니다.");
+      }
+      throw error;
+    }
+
+    return this.me(uid);
+  }
+
+  async myGameProfiles(uid: number) {
+    return this.db.query(
+      `SELECT game,tier,level,updated_at AS "updatedAt"
+       FROM user_game_profiles WHERE user_id=$1 ORDER BY updated_at DESC,game`,
+      [uid],
+    );
+  }
+
+  async saveGameProfile(uid: number, data: any) {
+    const game = boundedText(data?.game, 40, 2);
+    const tier = data?.tier == null || String(data.tier).trim() === ""
+      ? null
+      : boundedText(String(data.tier), 60, 1);
+    const level = data?.level == null || String(data.level).trim() === ""
+      ? null
+      : boundedText(String(data.level), 60, 1);
+    if (!tier && !level) {
+      throw new BadRequestException("티어 또는 레벨 중 하나는 입력해주세요.");
+    }
+    const [row] = await this.db.query(
+      `INSERT INTO user_game_profiles(user_id,game,tier,level,updated_at)
+       VALUES($1,$2,$3,$4,now())
+       ON CONFLICT(user_id,game) DO UPDATE SET tier=EXCLUDED.tier,level=EXCLUDED.level,updated_at=now()
+       RETURNING game,tier,level,updated_at AS "updatedAt"`,
+      [uid, game, tier, level],
+    );
+    return row;
+  }
+
+  async deleteGameProfile(uid: number, game: unknown) {
+    const value = boundedText(game, 40, 2);
+    await this.db.query(
+      "DELETE FROM user_game_profiles WHERE user_id=$1 AND game=$2",
+      [uid, value],
+    );
+    return { game: value };
+  }
+
+  async playerProfile(requesterId: number, userId: number) {
+    const [user] = await this.db.query(
+      `SELECT id,nickname,avatar FROM users WHERE id=$1`,
+      [userId],
+    );
+    if (!user) throw new NotFoundException("플레이어를 찾을 수 없습니다.");
+    const gameProfiles = await this.db.query(
+      `SELECT game,tier,level,updated_at AS "updatedAt"
+       FROM user_game_profiles WHERE user_id=$1 ORDER BY updated_at DESC,game`,
+      [userId],
+    );
+    return { ...user, gameProfiles, isMe: requesterId === userId };
+  }
+
+  teams(uid: number, mine: boolean) {
+    return this.db.query(
+      `SELECT t.id,t.title,t.game,t.mode,t.style,t.mic,t.capacity,t.owner_id,t.created_at,
+        t.is_private AS "isPrivate",
+        CASE WHEN t.owner_id=$1 THEN t.access_code ELSE NULL END AS "accessCode",
+        u.nickname AS "ownerName",u.avatar AS "ownerAvatar",
+        gp.tier AS "ownerTier",gp.level AS "ownerLevel",
+        (SELECT COUNT(*)::int FROM team_members m WHERE m.team_id=t.id) AS "memberCount",
+        EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.user_id=$1) AS joined,
+        (t.owner_id=$1) AS "isOwner",
+        CASE WHEN EXISTS(SELECT 1 FROM team_members mm WHERE mm.team_id=t.id AND mm.user_id=$1)
+          THEN (SELECT COUNT(*)::int FROM messages msg
+            WHERE msg.team_id=t.id
+              AND msg.sender_id<>$1
+              AND msg.id > COALESCE((SELECT last_read_message_id FROM team_members r WHERE r.team_id=t.id AND r.user_id=$1),0))
+          ELSE 0 END AS "unreadCount"
+      FROM teams t
+      JOIN users u ON u.id=t.owner_id
+      LEFT JOIN user_game_profiles gp ON gp.user_id=u.id AND gp.game=t.game
+      WHERE ($2::boolean=false OR EXISTS(
+        SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.user_id=$1
+      ))
+      ORDER BY t.id DESC
+      LIMIT 100`,
+      [uid, mine],
+    );
+  }
+
+  async create(uid: number, data: any) {
+    const title = boundedText(data.title, 80);
+    const game = boundedText(data.game, 40);
+    const mode = boundedText(data.mode, 40);
+    const style = boundedText(data.style, 20);
+    const capacity = positiveId(data.capacity);
+    const isPrivate = data.isPrivate === true;
+    const accessCode = isPrivate ? String(data.accessCode ?? "").trim() : null;
+
+    if (capacity < 2 || capacity > 20 || typeof data.mic !== "boolean") {
+      throw new BadRequestException("파티 설정을 확인해주세요.");
+    }
+    if (isPrivate && !/^\d{4}$/.test(accessCode ?? "")) {
+      throw new BadRequestException("비공개 파티 입장 코드는 숫자 4자리로 설정해주세요.");
+    }
+
+    const created = await this.db.transaction(async (em) => {
+      const [t] = await em.query(
+        `INSERT INTO teams(title,game,mode,style,mic,capacity,owner_id,is_private,access_code)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING id,title,game,mode,style,mic,capacity,owner_id,created_at,
+           is_private AS "isPrivate",access_code AS "accessCode"`,
+        [title, game, mode, style, data.mic, capacity, uid, isPrivate, accessCode],
+      );
+      await em.query(
+        "INSERT INTO team_members(team_id,user_id,last_read_message_id) VALUES($1,$2,0)",
+        [t.id, uid],
+      );
+      return t;
+    });
+    communityEvents.emit("admin:update", { type: "team_created", teamId: created.id });
+    return created;
+  }
+
+  async join(uid: number, id: number, code?: unknown) {
+    const joined = await this.db.transaction(async (em) => {
+      const [t] = await em.query("SELECT * FROM teams WHERE id=$1 FOR UPDATE", [
+        id,
+      ]);
+      if (!t) throw new NotFoundException("파티를 찾을 수 없습니다.");
+
+      const [ban] = await em.query(
+        `SELECT permanent,banned_until AS "bannedUntil"
+         FROM team_bans WHERE team_id=$1 AND user_id=$2`,
+        [id, uid],
+      );
+      if (ban) {
+        if (ban.permanent) {
+          throw new ForbiddenException("이 파티에서 영구 추방되었습니다.");
+        }
+        if (ban.bannedUntil && new Date(ban.bannedUntil).getTime() > Date.now()) {
+          const until = new Date(ban.bannedUntil).toLocaleTimeString("ko-KR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          throw new ForbiddenException(`임시 추방 상태입니다. ${until} 이후 다시 참가할 수 있습니다.`);
+        }
+        await em.query("DELETE FROM team_bans WHERE team_id=$1 AND user_id=$2", [id, uid]);
+      }
+
+      const members = await em.query(
+        "SELECT user_id FROM team_members WHERE team_id=$1",
+        [id],
+      );
+      if (members.some((m: any) => m.user_id === uid)) return t;
+      if (t.is_private) {
+        const input = typeof code === "string" ? code.trim() : "";
+        if (!/^\d{4}$/.test(input) || input !== t.access_code) {
+          throw new ForbiddenException("비공개 파티 입장 코드가 올바르지 않습니다.");
+        }
+      }
+      if (members.length >= t.capacity) {
+        throw new BadRequestException("모집 인원이 가득 찼습니다.");
+      }
+
+      const [latest] = await em.query(
+        "SELECT COALESCE(MAX(id),0)::int AS id FROM messages WHERE team_id=$1",
+        [id],
+      );
+      await em.query(
+        "INSERT INTO team_members(team_id,user_id,last_read_message_id) VALUES($1,$2,$3)",
+        [id, uid, latest?.id ?? 0],
+      );
+      return t;
+    });
+    communityEvents.emit("admin:update", { type: "membership", teamId: id });
+    return joined;
+  }
+
+  async member(uid: number, id: number) {
+    const [membership] = await this.db.query(
+      `SELECT tm.team_id AS "teamId",tm.user_id AS "userId",tm.last_read_message_id AS "lastReadMessageId",
+        t.owner_id AS "ownerId" FROM team_members tm
+       JOIN teams t ON t.id=tm.team_id
+       WHERE tm.team_id=$1 AND tm.user_id=$2`,
+      [id, uid],
+    );
+    if (!membership) {
+      throw new ForbiddenException("가입한 파티에서만 이용할 수 있습니다.");
+    }
+    return membership;
+  }
+
+  async owner(uid: number, id: number) {
+    const [team] = await this.db.query(
+      'SELECT id,owner_id AS "ownerId" FROM teams WHERE id=$1',
+      [id],
+    );
+    if (!team) throw new NotFoundException("파티를 찾을 수 없습니다.");
+    if (team.ownerId !== uid) {
+      throw new ForbiddenException("방장만 사용할 수 있는 기능입니다.");
+    }
+    return team;
+  }
+
+  async members(uid: number, id: number) {
+    await this.member(uid, id);
+    return this.db.query(
+      `SELECT u.id,u.nickname,u.avatar,tm.joined_at AS "joinedAt",
+        tm.last_read_message_id AS "lastReadMessageId",
+        (t.owner_id=u.id) AS "isOwner",
+        gp.tier,gp.level,t.game
+       FROM team_members tm
+       JOIN users u ON u.id=tm.user_id
+       JOIN teams t ON t.id=tm.team_id
+       LEFT JOIN user_game_profiles gp ON gp.user_id=u.id AND gp.game=t.game
+       WHERE tm.team_id=$1
+       ORDER BY (t.owner_id=u.id) DESC,tm.joined_at ASC`,
+      [id],
+    );
+  }
+
+  async history(uid: number, id: number, before?: number) {
+    await this.member(uid, id);
+    const rows = await this.db.query(
+      `SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",m.client_id AS "clientId",
+        m.body,m.created_at AS "createdAt",u.nickname,u.avatar
+       FROM messages m
+       JOIN users u ON u.id=m.sender_id
+       WHERE m.team_id=$1 AND ($2::int IS NULL OR m.id<$2)
+       ORDER BY m.id DESC
+       LIMIT 40`,
+      [id, before ?? null],
+    );
+    return rows.reverse();
+  }
+
+  async send(uid: number, data: any) {
+    const id = positiveId(data?.teamId);
+    const body = boundedText(data?.body, 2000);
+    if (
+      typeof data?.clientId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        data.clientId,
+      )
+    ) {
+      throw new BadRequestException("새 메시지 ID가 필요합니다.");
+    }
+
+    await this.member(uid, id);
+    await this.db.query(
+      `INSERT INTO messages(team_id,sender_id,client_id,body) VALUES($1,$2,$3,$4)
+       ON CONFLICT(sender_id,client_id) DO NOTHING`,
+      [id, uid, data.clientId, body],
+    );
+
+    const [m] = await this.db.query(
+      `SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",m.client_id AS "clientId",
+        m.body,m.created_at AS "createdAt",u.nickname,u.avatar
+       FROM messages m JOIN users u ON u.id=m.sender_id
+       WHERE m.sender_id=$1 AND m.client_id=$2`,
+      [uid, data.clientId],
+    );
+    if (m.teamId !== id || m.body !== body) {
+      throw new BadRequestException("새 메시지 ID가 필요합니다.");
+    }
+    return m;
+  }
+
+  async markRead(uid: number, teamId: number, messageId: number) {
+    await this.member(uid, teamId);
+    const [latest] = await this.db.query(
+      "SELECT COALESCE(MAX(id),0)::int AS id FROM messages WHERE team_id=$1",
+      [teamId],
+    );
+    const safeId = Math.min(messageId, latest?.id ?? 0);
+    await this.db.query(
+      `UPDATE team_members
+       SET last_read_message_id=GREATEST(last_read_message_id,$3)
+       WHERE team_id=$1 AND user_id=$2`,
+      [teamId, uid, safeId],
+    );
+    return { teamId, userId: uid, messageId: safeId };
+  }
+
+  async leaveTeam(uid: number, teamId: number) {
+    const membership = await this.member(uid, teamId);
+
+    if (membership.ownerId === uid) {
+      throw new BadRequestException(
+        "방장은 파티를 나갈 수 없습니다. 파티 삭제를 이용해주세요.",
+      );
+    }
+
+    await this.db.query(
+      "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
+      [teamId, uid],
+    );
+
+    communityEvents.emit("admin:update", {
+      type: "membership",
+      teamId,
+    });
+
+    return { teamId, userId: uid };
+  }
+
+  async kick(ownerId: number, teamId: number, memberId: number, duration: unknown) {
+    await this.owner(ownerId, teamId);
+    if (ownerId === memberId) {
+      throw new BadRequestException("방장은 자기 자신을 추방할 수 없습니다.");
+    }
+    const [member] = await this.db.query(
+      "SELECT user_id FROM team_members WHERE team_id=$1 AND user_id=$2",
+      [teamId, memberId],
+    );
+    if (!member) throw new NotFoundException("해당 파티원을 찾을 수 없습니다.");
+
+    const kind = duration === "permanent" ? "permanent" : "5m";
+    const bannedUntil = kind === "5m" ? new Date(Date.now() + 5 * 60 * 1000) : null;
+    await this.db.transaction(async (em) => {
+      await em.query(
+        `INSERT INTO team_bans(team_id,user_id,created_by,permanent,banned_until,created_at)
+         VALUES($1,$2,$3,$4,$5,now())
+         ON CONFLICT(team_id,user_id) DO UPDATE SET
+           created_by=EXCLUDED.created_by,permanent=EXCLUDED.permanent,
+           banned_until=EXCLUDED.banned_until,created_at=now()`,
+        [teamId, memberId, ownerId, kind === "permanent", bannedUntil],
+      );
+      await em.query("DELETE FROM team_members WHERE team_id=$1 AND user_id=$2", [teamId, memberId]);
+    });
+    communityEvents.emit("admin:update", { type: "membership", teamId });
+    return { teamId, userId: memberId, duration: kind, bannedUntil };
+  }
+
+  async reportUser(uid: number, data: any) {
+    const reportedUserId = positiveId(data?.reportedUserId);
+    if (reportedUserId === uid) throw new BadRequestException("본인은 신고할 수 없습니다.");
+    const category = boundedText(data?.category, 30, 2);
+    const details = boundedText(data?.details, 1000, 2);
+    const teamId = data?.teamId == null ? null : positiveId(data.teamId);
+    const [target] = await this.db.query("SELECT id FROM users WHERE id=$1", [reportedUserId]);
+    if (!target) throw new NotFoundException("신고할 플레이어를 찾을 수 없습니다.");
+    if (teamId != null) await this.member(uid, teamId);
+
+    const [row] = await this.db.query(
+      `INSERT INTO reports(reporter_id,reported_user_id,team_id,category,details)
+       VALUES($1,$2,$3,$4,$5)
+       RETURNING id,status,created_at AS "createdAt"`,
+      [uid, reportedUserId, teamId, category, details],
+    );
+    communityEvents.emit("admin:update", { type: "report_created", reportId: row.id });
+    return { ...row, message: "신고가 관리자에게 전달되었습니다." };
+  }
+
+  async announcements() {
+    return this.db.query(
+      `SELECT id,title,message,kind,created_at AS "createdAt",expires_at AS "expiresAt"
+       FROM announcements
+       WHERE active=true AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY id DESC LIMIT 5`,
+    );
+  }
+
+  async deleteTeam(ownerId: number, teamId: number) {
+    await this.owner(ownerId, teamId);
+    await this.db.transaction(async (em) => {
+      await em.query("DELETE FROM messages WHERE team_id=$1", [teamId]);
+      await em.query("DELETE FROM team_members WHERE team_id=$1", [teamId]);
+      await em.query("DELETE FROM team_bans WHERE team_id=$1", [teamId]);
+      await em.query("DELETE FROM teams WHERE id=$1", [teamId]);
+    });
+    communityEvents.emit("admin:update", { type: "team_deleted", teamId });
+    return { teamId };
+  }
+}
+
+
+===== backend/src/community/realtime.ts =====
+
+import { HttpException, INestApplication } from "@nestjs/common";
+import { Server } from "socket.io";
+import { SessionGuard } from "../auth/session.guard.js";
+import { AdminService } from "../admin/admin.service.js";
+import { CommunityService, positiveId } from "./community.service.js";
+import { communityEvents } from "./events.js";
+import { MaintenanceService } from "../maintenance/maintenance.service.js";
+
+type CorsOriginChecker = (
+  origin: string | undefined,
+  callback: (error: Error | null, allow?: boolean) => void,
+) => void;
+
+export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
+  const io = new Server(app.getHttpServer(), {
+    cors: { origin: corsOrigin },
+    maxHttpBufferSize: 16384,
+  });
+  const auth = app.get(SessionGuard);
+  const service = app.get(CommunityService);
+  const adminService = app.get(AdminService);
+  const maintenance = app.get(MaintenanceService);
+
+  communityEvents.on("admin:update", (event) => {
+    io.to("admins").emit("admin:update", event);
+  });
+  communityEvents.on("announcement:update", async (event: any) => {
+    io.emit("announcement:update", event);
+    io.emit("maintenance:update", event);
+
+    // 점검 시작 시 일반 사용자 실시간 연결도 즉시 끊어 채팅/음성 사용을 막습니다.
+    if (event?.type === "created" && event?.announcement?.kind === "maintenance") {
+      const clients = await io.fetchSockets();
+      for (const client of clients) {
+        if (client.data.session?.admin === true) continue;
+        client.emit("maintenance:locked", event.announcement);
+        client.disconnect(true);
+      }
+    }
+  });
+  communityEvents.on("moderation:update", async (event: any) => {
+    io.to("admins").emit("admin:update", event);
+    if (event?.userId) {
+      io.to("user:" + event.userId).emit("moderation:update", event);
+      if (event.type === "suspended") {
+        const clients = await io.in("user:" + event.userId).fetchSockets();
+        for (const client of clients) client.disconnect(true);
+      }
+    }
+  });
+
+  io.use(async (socket, next) => {
+    try {
+      socket.data.session = await auth.verify(socket.handshake.auth?.token);
+      const status = await maintenance.status();
+      if (status.active && socket.data.session?.admin !== true) {
+        next(new Error(status.message ?? "현재 PyGa 점검 중입니다."));
+        return;
+      }
+      next();
+    } catch {
+      next(new Error("다시 로그인해주세요."));
+    }
+  });
+
+  io.on("connection", (socket) => {
+    void socket.join("user:" + socket.data.session.sub);
+    socket.on("disconnecting", () => {
+      const teamId = socket.data.voiceTeamId;
+      if (teamId) {
+        socket.to("voice:" + teamId).emit("voice:peer_left", {
+          teamId,
+          socketId: socket.id,
+          userId: socket.data.session?.sub,
+        });
+      }
+    });
+    const expires = setTimeout(
+      () => socket.disconnect(true),
+      Math.max(0, socket.data.session.exp * 1000 - Date.now()),
+    );
+    socket.on("disconnect", () => clearTimeout(expires));
+
+    let lastSend = 0;
+    const run = async (ack: any, action: (uid: number) => Promise<any>) => {
+      if (typeof ack !== "function") return;
+      try {
+        // 연결 시 이미 JWT/정지 상태를 검증했습니다. 매 메시지마다 DB를 다시 조회하지
+        // 않아 채팅 전송·읽음 처리 지연을 줄입니다. 정지 시 moderation:update로 즉시 연결을 끊습니다.
+        const s = socket.data.session;
+        if (!s || s.exp * 1000 <= Date.now()) {
+          throw new HttpException("다시 로그인해주세요.", 401);
+        }
+        if (s.admin !== true) {
+          const status = await maintenance.status();
+          if (status.active) {
+            throw new HttpException(
+              status.message ?? "현재 PyGa 점검 중입니다.",
+              503,
+            );
+          }
+        }
+        ack({ ok: true, data: await action(s.sub) });
+      } catch (e) {
+        ack({
+          ok: false,
+          error:
+            e instanceof HttpException
+              ? e.message
+              : "처리하지 못했습니다. 다시 시도해주세요.",
+        });
+      }
+    };
+
+    const runAdmin = async (
+      ack: any,
+      action: (uid: number) => Promise<any>,
+    ) =>
+      run(ack, async (uid) => {
+        await adminService.requireAdmin(uid);
+        return action(uid);
+      });
+
+    socket.on("admin:watch", (_data, ack) =>
+      void runAdmin(ack, async () => {
+        await socket.join("admins");
+        return { watching: true };
+      }),
+    );
+
+    socket.on("team:join", (data, ack) =>
+      void run(ack, async (uid) => {
+        const id = positiveId(data?.teamId);
+        await service.member(uid, id);
+        for (const room of socket.rooms) {
+          if (room.startsWith("team:")) await socket.leave(room);
+        }
+        await socket.join("team:" + id);
+        socket.to("team:" + id).emit("team:members_changed", { teamId: id });
+        return { teamId: id };
+      }),
+    );
+
+    socket.on("message:send", (data, ack) =>
+      void run(ack, async (uid) => {
+        if (Date.now() - lastSend < 300) {
+          throw new HttpException("잠시 후 보내주세요.", 429);
+        }
+        lastSend = Date.now();
+        const m = await service.send(uid, data);
+        io.to("team:" + m.teamId).emit("message:new", m);
+        io.to("admins").emit("admin:message_new", m);
+        io.to("admins").emit("admin:update", { type: "message", teamId: m.teamId });
+        return m;
+      }),
+    );
+
+    socket.on("message:read", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const messageId = positiveId(data?.messageId);
+        const update = await service.markRead(uid, teamId, messageId);
+        io.to("team:" + teamId).emit("message:read", update);
+        return update;
+      }),
+    );
+
+    socket.on("team:leave", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const result = await service.leaveTeam(uid, teamId);
+
+        const clients = await io.in("team:" + teamId).fetchSockets();
+        for (const client of clients) {
+          if (client.data.session?.sub === uid) {
+            if (client.rooms.has("voice:" + teamId)) {
+              io.to("voice:" + teamId).except(client.id).emit(
+                "voice:peer_left",
+                {
+                  teamId,
+                  socketId: client.id,
+                  userId: uid,
+                },
+              );
+              await client.leave("voice:" + teamId);
+              client.data.voiceTeamId = undefined;
+            }
+
+            await client.leave("team:" + teamId);
+          }
+        }
+
+        io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        io.to("admins").emit("admin:update", {
+          type: "membership",
+          teamId,
+        });
+
+        return result;
+      }),
+    );
+
+    socket.on("team:kick", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const memberId = positiveId(data?.memberId);
+        const result = await service.kick(uid, teamId, memberId, data?.duration);
+
+        const clients = await io.in("team:" + teamId).fetchSockets();
+        for (const client of clients) {
+          if (client.data.session?.sub === memberId) {
+            client.emit("team:kicked", { teamId, duration: result.duration, bannedUntil: result.bannedUntil });
+            if (client.rooms.has("voice:" + teamId)) {
+              io.to("voice:" + teamId).except(client.id).emit("voice:peer_left", {
+                teamId,
+                socketId: client.id,
+                userId: memberId,
+              });
+              await client.leave("voice:" + teamId);
+              client.data.voiceTeamId = undefined;
+            }
+            await client.leave("team:" + teamId);
+          }
+        }
+        io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        io.to("admins").emit("admin:update", { type: "membership", teamId });
+        return result;
+      }),
+    );
+
+    socket.on("team:delete", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const result = await service.deleteTeam(uid, teamId);
+        io.to("team:" + teamId).emit("team:deleted", { teamId });
+        const clients = await io.in("team:" + teamId).fetchSockets();
+        for (const client of clients) {
+          if (client.rooms.has("voice:" + teamId)) {
+            io.to("voice:" + teamId).except(client.id).emit("voice:peer_left", {
+              teamId,
+              socketId: client.id,
+              userId: client.data.session?.sub,
+            });
+            await client.leave("voice:" + teamId);
+            client.data.voiceTeamId = undefined;
+          }
+          await client.leave("team:" + teamId);
+        }
+        io.to("admins").emit("admin:update", { type: "team_deleted", teamId });
+        return result;
+      }),
+    );
+
+    socket.on("voice:join", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        await service.member(uid, teamId);
+        const room = "voice:" + teamId;
+        const peers = await io.in(room).fetchSockets();
+        await socket.join(room);
+        socket.data.voiceTeamId = teamId;
+        socket.to(room).emit("voice:peer_joined", {
+          teamId,
+          socketId: socket.id,
+          userId: uid,
+        });
+        return {
+          teamId,
+          socketId: socket.id,
+          peers: peers
+            .filter((peer) => peer.id !== socket.id)
+            .map((peer) => ({
+              socketId: peer.id,
+              userId: peer.data.session?.sub,
+            })),
+        };
+      }),
+    );
+
+    socket.on("voice:offer", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        await service.member(uid, teamId);
+        const target = String(data?.target ?? "");
+        const peer = io.sockets.sockets.get(target);
+        if (!peer || !peer.rooms.has("voice:" + teamId)) {
+          throw new HttpException("음성 상대를 찾을 수 없습니다.", 404);
+        }
+        peer.emit("voice:offer", {
+          teamId,
+          from: socket.id,
+          userId: uid,
+          sdp: data?.sdp,
+        });
+        return { sent: true };
+      }),
+    );
+
+    socket.on("voice:answer", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        await service.member(uid, teamId);
+        const target = String(data?.target ?? "");
+        const peer = io.sockets.sockets.get(target);
+        if (!peer || !peer.rooms.has("voice:" + teamId)) {
+          throw new HttpException("음성 상대를 찾을 수 없습니다.", 404);
+        }
+        peer.emit("voice:answer", {
+          teamId,
+          from: socket.id,
+          userId: uid,
+          sdp: data?.sdp,
+        });
+        return { sent: true };
+      }),
+    );
+
+    socket.on("voice:ice", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        await service.member(uid, teamId);
+        const target = String(data?.target ?? "");
+        const peer = io.sockets.sockets.get(target);
+        if (!peer || !peer.rooms.has("voice:" + teamId)) {
+          throw new HttpException("음성 상대를 찾을 수 없습니다.", 404);
+        }
+        peer.emit("voice:ice", {
+          teamId,
+          from: socket.id,
+          candidate: data?.candidate,
+        });
+        return { sent: true };
+      }),
+    );
+
+    socket.on("voice:leave", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        await service.member(uid, teamId);
+        const room = "voice:" + teamId;
+        await socket.leave(room);
+        socket.data.voiceTeamId = undefined;
+        socket.to(room).emit("voice:peer_left", {
+          teamId,
+          socketId: socket.id,
+          userId: uid,
+        });
+        return { left: true };
+      }),
+    );
+
+    socket.on("admin:message_delete", (data, ack) =>
+      void runAdmin(ack, async (uid) => {
+        const result = await adminService.deleteMessage(uid, data?.messageId);
+        io.to("team:" + result.teamId).emit("message:deleted", {
+          teamId: result.teamId,
+          messageId: result.id,
+        });
+        io.to("admins").emit("admin:update", {
+          type: "message_deleted",
+          teamId: result.teamId,
+          messageId: result.id,
+        });
+        return result;
+      }),
+    );
+
+    socket.on("admin:team_delete", (data, ack) =>
+      void runAdmin(ack, async (uid) => {
+        const result = await adminService.deleteTeam(uid, data?.teamId);
+        io.to("team:" + result.id).emit("team:deleted", { teamId: result.id });
+        const clients = await io.in("team:" + result.id).fetchSockets();
+        for (const client of clients) {
+          if (client.rooms.has("voice:" + result.id)) {
+            io.to("voice:" + result.id).except(client.id).emit("voice:peer_left", {
+              teamId: result.id,
+              socketId: client.id,
+              userId: client.data.session?.sub,
+            });
+            await client.leave("voice:" + result.id);
+            client.data.voiceTeamId = undefined;
+          }
+          await client.leave("team:" + result.id);
+        }
+        io.to("admins").emit("admin:update", { type: "team_deleted", teamId: result.id });
+        return result;
+      }),
+    );
+
+    socket.on("admin:user_delete", (data, ack) =>
+      void runAdmin(ack, async (uid) => {
+        const result = await adminService.deleteUser(uid, data?.userId);
+        for (const teamId of result.deletedTeamIds ?? []) {
+          io.to("team:" + teamId).emit("team:deleted", { teamId });
+        }
+        const clients = await io.fetchSockets();
+        for (const client of clients) {
+          if (client.data.session?.sub === result.id) {
+            client.emit("account:deleted", {});
+            client.disconnect(true);
+          }
+        }
+        io.to("admins").emit("admin:update", { type: "user_deleted", userId: result.id });
+        return result;
+      }),
+    );
+  });
+
+  return io;
+}
+
+
+===== backend/schema.sql =====
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS users(
+  id SERIAL PRIMARY KEY,
+  nickname VARCHAR(30) NOT NULL,
+  email VARCHAR(100) UNIQUE NOT NULL,
+  password VARCHAR NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_permanent BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_reason TEXT;
+
+-- 이메일/닉네임을 대소문자와 앞뒤 공백을 무시하고 중복 차단합니다.
+-- 예: Test@gmail.com == test@gmail.com, KJun == kjun
+-- 기존 DB에 이미 중복 데이터가 있으면 배포를 실패시키지 않고 서버 검사로만 차단합니다.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM (
+      SELECT lower(trim(email)) AS value
+      FROM users
+      GROUP BY lower(trim(email))
+      HAVING COUNT(*) > 1
+    ) duplicates
+  ) THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_ci ON users (lower(trim(email)))';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM (
+      SELECT lower(trim(nickname)) AS value
+      FROM users
+      GROUP BY lower(trim(nickname))
+      HAVING COUNT(*) > 1
+    ) duplicates
+  ) THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS users_nickname_unique_ci ON users (lower(trim(nickname)))';
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS teams(
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(80) NOT NULL,
+  game VARCHAR(40) NOT NULL,
+  mode VARCHAR(40) NOT NULL,
+  style VARCHAR(20) NOT NULL,
+  mic BOOLEAN NOT NULL,
+  capacity INTEGER NOT NULL CHECK(capacity BETWEEN 2 AND 20),
+  owner_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS access_code VARCHAR(4);
+ALTER TABLE teams DROP CONSTRAINT IF EXISTS teams_access_code_format;
+ALTER TABLE teams ADD CONSTRAINT teams_access_code_format CHECK (
+  (is_private = false AND access_code IS NULL)
+  OR
+  (is_private = true AND access_code ~ '^[0-9]{4}$')
+);
+
+CREATE TABLE IF NOT EXISTS team_members(
+  team_id INTEGER NOT NULL REFERENCES teams(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_read_message_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(team_id,user_id)
+);
+ALTER TABLE team_members ADD COLUMN IF NOT EXISTS last_read_message_id INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS team_members_user_idx ON team_members(user_id);
+
+CREATE TABLE IF NOT EXISTS messages(
+  id SERIAL PRIMARY KEY,
+  team_id INTEGER NOT NULL REFERENCES teams(id),
+  sender_id INTEGER NOT NULL REFERENCES users(id),
+  client_id UUID NOT NULL,
+  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(sender_id,client_id)
+);
+CREATE INDEX IF NOT EXISTS messages_team_page_idx ON messages(team_id,id DESC);
+
+-- 방장이 5분 또는 영구 추방을 선택할 수 있도록 파티별 차단 상태를 보관합니다.
+CREATE TABLE IF NOT EXISTS team_bans(
+  team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  permanent BOOLEAN NOT NULL DEFAULT false,
+  banned_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(team_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS team_bans_user_idx ON team_bans(user_id);
+
+-- 게임별 티어/레벨은 게임 수가 늘어나도 확장 가능한 별도 테이블로 관리합니다.
+CREATE TABLE IF NOT EXISTS user_game_profiles(
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game VARCHAR(40) NOT NULL,
+  tier VARCHAR(60),
+  level VARCHAR(60),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(user_id,game)
+);
+CREATE INDEX IF NOT EXISTS user_game_profiles_game_idx ON user_game_profiles(game);
+
+-- 유저 신고 및 관리자 처리 기록입니다.
+CREATE TABLE IF NOT EXISTS reports(
+  id SERIAL PRIMARY KEY,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reported_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+  category VARCHAR(30) NOT NULL,
+  details TEXT NOT NULL CHECK(length(details) BETWEEN 2 AND 1000),
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  admin_note TEXT,
+  suspension_type VARCHAR(30),
+  suspension_until TIMESTAMPTZ,
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reports_status_idx ON reports(status,created_at DESC);
+CREATE INDEX IF NOT EXISTS reports_reported_user_idx ON reports(reported_user_id,created_at DESC);
+
+-- 운영 공지/점검 알림. maintenance는 점검 중, maintenance_soon은 점검 예고입니다.
+CREATE TABLE IF NOT EXISTS announcements(
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(80) NOT NULL,
+  message TEXT NOT NULL CHECK(length(message) BETWEEN 2 AND 1000),
+  kind VARCHAR(30) NOT NULL DEFAULT 'notice',
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS announcements_active_idx ON announcements(active,created_at DESC);
+
+COMMIT;
+
+
+===== frontend/lib/services/api.dart =====
+
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class Api {
+  static const _configuredBase = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: '',
+  );
+
+  static final http.Client _client = http.Client();
+
+  static String _activeBase = _configuredBase.isNotEmpty
+      ? _normalizeBase(_configuredBase)
+      : 'http://127.0.0.1:3000';
+
+  static String get base => _activeBase;
+
+  static String? token;
+  static Map<String, dynamic> user = {};
+
+  static String _normalizeBase(String value) {
+    final trimmed = value.trim();
+    return trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
+  }
+
+  static List<String> get _baseCandidates {
+    if (_configuredBase.trim().isNotEmpty) {
+      final configured = _normalizeBase(_configuredBase);
+      final uri = Uri.tryParse(configured);
+      if (uri != null && (uri.host == 'localhost' || uri.host == '127.0.0.1')) {
+        final alternateHost = uri.host == 'localhost' ? '127.0.0.1' : 'localhost';
+        final alternate = uri.replace(host: alternateHost).toString();
+        return [configured, _normalizeBase(alternate)];
+      }
+      return [configured];
+    }
+    return const [
+      'http://127.0.0.1:3000',
+      'http://localhost:3000',
+    ];
+  }
+
+  static Future<dynamic> _send(
+    String baseUrl,
+    String method,
+    String path,
+    Map<String, dynamic>? body,
+  ) async {
+    final req = http.Request(method, Uri.parse('$baseUrl$path'));
+    req.headers['Content-Type'] = 'application/json';
+    if (token != null) req.headers['Authorization'] = 'Bearer $token';
+    if (body != null) req.body = jsonEncode(body);
+
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 65));
+    final response = await http.Response.fromStream(streamed);
+
+    dynamic data = <String, dynamic>{};
+    if (response.body.isNotEmpty) {
+      try {
+        data = jsonDecode(response.body);
+      } on FormatException {
+        data = {'message': response.body};
+      }
+    }
+
+    if (response.statusCode >= 400) {
+      final dynamic message = data is Map ? data['message'] : null;
+      throw Exception(
+        message is List
+            ? message.join('\n')
+            : message ?? '요청에 실패했습니다. (${response.statusCode})',
+      );
+    }
+
+    return data;
+  }
+
+  static Future<dynamic> request(
+    String method,
+    String path, [
+    Map<String, dynamic>? body,
+  ]) async {
+    Object? lastConnectionError;
+
+    for (final candidate in _baseCandidates) {
+      try {
+        final result = await _send(candidate, method, path, body);
+        _activeBase = candidate;
+        return result;
+      } on TimeoutException catch (e) {
+        lastConnectionError = e;
+      } on http.ClientException catch (e) {
+        lastConnectionError = e;
+      } on Exception {
+        rethrow;
+      }
+    }
+
+    if (lastConnectionError != null) {
+      throw Exception('백엔드 서버에 연결할 수 없습니다. 서버가 깨어나는 중이면 잠시 후 다시 시도해주세요.');
+    }
+    throw Exception('서버 요청에 실패했습니다.');
+  }
+
+  /// Render 무료 서버가 잠들어 있을 때 사용자가 입력하는 동안 미리 깨웁니다.
+  static Future<void> warmup() async {
+    for (final candidate in _baseCandidates) {
+      try {
+        final response = await _client
+            .get(Uri.parse('$candidate/'))
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode < 500) {
+          _activeBase = candidate;
+          return;
+        }
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> register(String nickname, String email, String password) async {
+    token = null;
+    user = {};
+    final result = await request('POST', '/auth/register', {
+      'nickname': nickname.trim(),
+      'email': email.trim().toLowerCase(),
+      'password': password,
+    });
+    token = result['accessToken'] as String;
+    user = Map<String, dynamic>.from(result['user'] as Map);
+  }
+
+  static Future<void> login(String email, String password) async {
+    token = null;
+    user = {};
+    final result = await request('POST', '/auth/login', {
+      'email': email.trim().toLowerCase(),
+      'password': password,
+    });
+    token = result['accessToken'] as String;
+    user = Map<String, dynamic>.from(result['user'] as Map);
+  }
+
+  static Future<void> adminLogin(String email, String password) async {
+    token = null;
+    user = {};
+    final result = await request('POST', '/auth/admin/login', {
+      'email': email.trim().toLowerCase(),
+      'password': password,
+    });
+    token = result['accessToken'] as String;
+    user = Map<String, dynamic>.from(result['user'] as Map);
+  }
+
+  static void logout() {
+    token = null;
+    user = {};
+  }
+}
+
+
+===== frontend/lib/pyga_app.dart =====
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;

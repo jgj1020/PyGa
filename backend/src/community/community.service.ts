@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -47,6 +48,18 @@ export class CommunityService {
     const nickname = boundedText(data.nickname, 30, 2);
     let avatar: string | null | undefined;
 
+    const [nicknameOwner] = await this.db.query(
+      `SELECT id
+       FROM users
+       WHERE id<>$1 AND lower(trim(nickname))=lower(trim($2))
+       LIMIT 1`,
+      [uid, nickname],
+    );
+
+    if (nicknameOwner) {
+      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    }
+
     if (data.avatar === null) avatar = null;
     else if (data.avatar !== undefined) {
       if (
@@ -60,14 +73,17 @@ export class CommunityService {
           "2MB 이하 PNG/JPEG/WebP 사진을 선택해주세요.",
         );
       }
+
       try {
         const input = Buffer.from(data.avatar.split(",")[1], "base64");
         if (input.length > 2 * 1024 * 1024) throw new Error();
+
         const photo = await sharp(input, { limitInputPixels: 16000000 })
           .rotate()
           .resize(192, 192, { fit: "cover" })
           .jpeg({ quality: 80 })
           .toBuffer();
+
         avatar = "data:image/jpeg;base64," + photo.toString("base64");
       } catch {
         throw new BadRequestException(
@@ -76,17 +92,26 @@ export class CommunityService {
       }
     }
 
-    if (avatar === undefined) {
-      await this.db.query("UPDATE users SET nickname=$2 WHERE id=$1", [
-        uid,
-        nickname,
-      ]);
-    } else {
-      await this.db.query(
-        "UPDATE users SET nickname=$2,avatar=$3 WHERE id=$1",
-        [uid, nickname, avatar],
-      );
+    try {
+      if (avatar === undefined) {
+        await this.db.query("UPDATE users SET nickname=$2 WHERE id=$1", [
+          uid,
+          nickname,
+        ]);
+      } else {
+        await this.db.query(
+          "UPDATE users SET nickname=$2,avatar=$3 WHERE id=$1",
+          [uid, nickname, avatar],
+        );
+      }
+    } catch (error: any) {
+      const code = error?.code ?? error?.driverError?.code;
+      if (code === "23505") {
+        throw new ConflictException("이미 사용 중인 닉네임입니다.");
+      }
+      throw error;
     }
+
     return this.me(uid);
   }
 
@@ -363,6 +388,28 @@ export class CommunityService {
       [teamId, uid, safeId],
     );
     return { teamId, userId: uid, messageId: safeId };
+  }
+
+  async leaveTeam(uid: number, teamId: number) {
+    const membership = await this.member(uid, teamId);
+
+    if (membership.ownerId === uid) {
+      throw new BadRequestException(
+        "방장은 파티를 나갈 수 없습니다. 파티 삭제를 이용해주세요.",
+      );
+    }
+
+    await this.db.query(
+      "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
+      [teamId, uid],
+    );
+
+    communityEvents.emit("admin:update", {
+      type: "membership",
+      teamId,
+    });
+
+    return { teamId, userId: uid };
   }
 
   async kick(ownerId: number, teamId: number, memberId: number, duration: unknown) {

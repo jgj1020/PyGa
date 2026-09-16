@@ -13,6 +13,36 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_permanent BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_reason TEXT;
 
+-- 이메일/닉네임을 대소문자와 앞뒤 공백을 무시하고 중복 차단합니다.
+-- 예: Test@gmail.com == test@gmail.com, KJun == kjun
+-- 기존 DB에 이미 중복 데이터가 있으면 배포를 실패시키지 않고 서버 검사로만 차단합니다.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM (
+      SELECT lower(trim(email)) AS value
+      FROM users
+      GROUP BY lower(trim(email))
+      HAVING COUNT(*) > 1
+    ) duplicates
+  ) THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_ci ON users (lower(trim(email)))';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM (
+      SELECT lower(trim(nickname)) AS value
+      FROM users
+      GROUP BY lower(trim(nickname))
+      HAVING COUNT(*) > 1
+    ) duplicates
+  ) THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS users_nickname_unique_ci ON users (lower(trim(nickname)))';
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS teams(
   id SERIAL PRIMARY KEY,
   title VARCHAR(80) NOT NULL,

@@ -165,6 +165,41 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
       }),
     );
 
+    socket.on("team:leave", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const result = await service.leaveTeam(uid, teamId);
+
+        const clients = await io.in("team:" + teamId).fetchSockets();
+        for (const client of clients) {
+          if (client.data.session?.sub === uid) {
+            if (client.rooms.has("voice:" + teamId)) {
+              io.to("voice:" + teamId).except(client.id).emit(
+                "voice:peer_left",
+                {
+                  teamId,
+                  socketId: client.id,
+                  userId: uid,
+                },
+              );
+              await client.leave("voice:" + teamId);
+              client.data.voiceTeamId = undefined;
+            }
+
+            await client.leave("team:" + teamId);
+          }
+        }
+
+        io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        io.to("admins").emit("admin:update", {
+          type: "membership",
+          teamId,
+        });
+
+        return result;
+      }),
+    );
+
     socket.on("team:kick", (data, ack) =>
       void run(ack, async (uid) => {
         const teamId = positiveId(data?.teamId);
