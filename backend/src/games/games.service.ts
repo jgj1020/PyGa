@@ -6,6 +6,7 @@ type RawgGame = {
   name: string;
   slug?: string;
   background_image?: string | null;
+  short_screenshots?: Array<{ id?: number; image?: string | null }>;
 };
 
 type CoverResult = {
@@ -33,35 +34,50 @@ export class GamesService {
       .trim();
   }
 
+  private imageOf(game: RawgGame): string | null {
+    if (game.background_image?.startsWith("http")) return game.background_image;
+    const screenshot = game.short_screenshots?.find((item) => item.image?.startsWith("http"))?.image;
+    return screenshot ?? null;
+  }
+
   private scoreCandidate(entry: GameCatalogEntry, candidate: RawgGame): number {
     const name = this.normalize(candidate.name);
     const accepted = entry.acceptedNames.map((item) => this.normalize(item));
-    const query = this.normalize(entry.query);
+    const queries = entry.queries.map((item) => this.normalize(item));
 
     if (accepted.includes(name)) return 1000;
-    if (name === query) return 980;
+    if (queries.includes(name)) return 980;
 
     let best = 0;
-    for (const alias of accepted) {
-      if (name.startsWith(alias) || alias.startsWith(name)) best = Math.max(best, 820);
-      if (name.includes(alias) || alias.includes(name)) best = Math.max(best, 760);
+    for (const alias of [...accepted, ...queries]) {
+      if (!alias || !name) continue;
+      if (name.startsWith(alias) || alias.startsWith(name)) best = Math.max(best, 850);
+      if (name.includes(alias) || alias.includes(name)) best = Math.max(best, 790);
     }
-    if (name.includes(query) || query.includes(name)) best = Math.max(best, 700);
     return best;
   }
 
-  private async search(entry: GameCatalogEntry, apiKey: string, exact: boolean): Promise<RawgGame[]> {
+  private async search(query: string, apiKey: string, exact: boolean): Promise<RawgGame[]> {
     const url = new URL("https://api.rawg.io/api/games");
     url.searchParams.set("key", apiKey);
-    url.searchParams.set("search", entry.query);
-    url.searchParams.set("page_size", "10");
+    url.searchParams.set("search", query);
+    url.searchParams.set("page_size", "15");
     url.searchParams.set("search_exact", exact ? "true" : "false");
     url.searchParams.set("exclude_additions", "true");
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!response.ok) return [];
     const body = (await response.json()) as { results?: RawgGame[] };
     return body.results ?? [];
+  }
+
+  private pick(entry: GameCatalogEntry, candidates: RawgGame[]): RawgGame | null {
+    const ranked = candidates
+      .filter((candidate) => Boolean(this.imageOf(candidate)))
+      .map((candidate) => ({ candidate, score: this.scoreCandidate(entry, candidate) }))
+      .sort((a, b) => b.score - a.score);
+
+    return ranked.find((row) => row.score >= 790)?.candidate ?? null;
   }
 
   private async findCover(entry: GameCatalogEntry, apiKey: string): Promise<CoverResult | null> {
@@ -69,32 +85,38 @@ export class GamesService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
     try {
-      let candidates = await this.search(entry, apiKey, true);
+      let selected: RawgGame | null = null;
 
-      // RAWG의 exact 검색이 결과를 주지 않는 게임도 있어 한 번만 일반 검색으로 보완합니다.
-      // 단, 아래 점수 검증을 통과한 이름만 사용하므로 엉뚱한 커버는 채택하지 않습니다.
-      if (candidates.length === 0) {
-        candidates = await this.search(entry, apiKey, false);
+      // 1) 대표 이름들을 exact 검색합니다.
+      for (const query of entry.queries) {
+        const exactCandidates = await this.search(query, apiKey, true);
+        selected = this.pick(entry, exactCandidates);
+        if (selected) break;
       }
 
-      const ranked = candidates
-        .filter((candidate) => Boolean(candidate.background_image))
-        .map((candidate) => ({ candidate, score: this.scoreCandidate(entry, candidate) }))
-        .sort((a, b) => b.score - a.score);
+      // 2) exact 결과가 있었더라도 적절한 게임/이미지를 못 찾았으면 일반 검색을 다시 합니다.
+      if (!selected) {
+        for (const query of entry.queries) {
+          const looseCandidates = await this.search(query, apiKey, false);
+          selected = this.pick(entry, looseCandidates);
+          if (selected) break;
+        }
+      }
 
-      const selected = ranked.find((row) => row.score >= 700)?.candidate;
-      const value = selected?.background_image
+      const coverUrl = selected ? this.imageOf(selected) : null;
+      const value = selected && coverUrl
         ? {
             game: entry.key,
             providerName: selected.name,
             providerId: String(selected.id),
-            coverUrl: selected.background_image,
+            coverUrl,
           }
         : null;
 
+      // 성공 결과는 하루 캐시, 실패 결과는 10분만 캐시해서 RAWG 데이터가 잠시 비었을 때 빨리 재시도합니다.
       this.cache.set(entry.key, {
         value,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+        expiresAt: Date.now() + (value ? 24 * 60 * 60 * 1000 : 10 * 60 * 1000),
       });
       return value;
     } catch {
@@ -113,10 +135,10 @@ export class GamesService {
       };
     }
 
-    // 외부 API에 한 번에 너무 많은 요청을 보내지 않도록 4개씩 처리합니다.
+    // 외부 API 과부하/요청 제한을 피하기 위해 3개씩 처리합니다.
     const rows: CoverResult[] = [];
-    for (let i = 0; i < gameCatalog.length; i += 4) {
-      const batch = gameCatalog.slice(i, i + 4);
+    for (let i = 0; i < gameCatalog.length; i += 3) {
+      const batch = gameCatalog.slice(i, i + 3);
       const resolved = await Promise.all(batch.map((entry) => this.findCover(entry, apiKey)));
       for (const value of resolved) {
         if (value) rows.push(value);
