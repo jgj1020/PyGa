@@ -7,3 +7,5 @@ CHANGED-FILES.txt
 README-FIRST.txt
 README-HOTFIX.txt
 README.txt
+frontend/android/key.properties
+frontend/android/upload-keystore.jks

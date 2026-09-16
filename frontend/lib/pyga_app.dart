@@ -983,7 +983,7 @@ class _AuthPageState extends State<AuthPage> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Text(
-                                register ? '새 계정 만들기' : '다시 만나서 반가워요 👋',
+                                register ? '새 계정 만들기' : '함께할 파티원을 찾아볼까요?',
                                 style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
                               ),
                               const SizedBox(height: 7),
@@ -1981,8 +1981,9 @@ class ActiveAnnouncementBanner extends StatefulWidget {
 class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
   List<Map<String, dynamic>> announcements = [];
   Timer? timer;
+  Timer? autoHideTimer;
   io.Socket? announcementSocket;
-  int? dismissedId;
+  final Set<int> hiddenIds = <int>{};
 
   @override
   void initState() {
@@ -2007,8 +2008,43 @@ class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
   @override
   void dispose() {
     timer?.cancel();
+    autoHideTimer?.cancel();
     announcementSocket?.dispose();
     super.dispose();
+  }
+
+  int? _idOf(Map<String, dynamic> item) => (item['id'] as num?)?.toInt();
+
+  void _scheduleAutoHide() {
+    autoHideTimer?.cancel();
+    final visible = announcements.where((a) {
+      final id = _idOf(a);
+      return id == null || !hiddenIds.contains(id);
+    }).toList();
+    if (visible.isEmpty) return;
+
+    final item = visible.first;
+    final id = _idOf(item);
+    if (id == null) return;
+
+    final createdAt = DateTime.tryParse('${item['createdAt'] ?? ''}')?.toLocal();
+    final elapsed = createdAt == null ? Duration.zero : DateTime.now().difference(createdAt);
+    final remaining = const Duration(minutes: 2) - elapsed;
+
+    if (remaining <= Duration.zero) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => hiddenIds.add(id));
+        _scheduleAutoHide();
+      });
+      return;
+    }
+
+    autoHideTimer = Timer(remaining, () {
+      if (!mounted) return;
+      setState(() => hiddenIds.add(id));
+      _scheduleAutoHide();
+    });
   }
 
   Future<void> load() async {
@@ -2019,6 +2055,7 @@ class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
       setState(() {
         announcements = (raw as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
       });
+      _scheduleAutoHide();
     } catch (_) {}
   }
 
@@ -2050,7 +2087,10 @@ class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
 
   @override
   Widget build(BuildContext context) {
-    final visible = announcements.where((a) => a['id'] != dismissedId).toList();
+    final visible = announcements.where((a) {
+      final id = _idOf(a);
+      return id == null || !hiddenIds.contains(id);
+    }).toList();
     if (visible.isEmpty) return const SizedBox.shrink();
     final item = visible.first;
     final kind = '${item['kind'] ?? 'notice'}';
@@ -2084,7 +2124,12 @@ class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
           if (!persistent)
             IconButton(
               visualDensity: VisualDensity.compact,
-              onPressed: () => setState(() => dismissedId = item['id'] as int?),
+              onPressed: () {
+                final id = _idOf(item);
+                if (id == null) return;
+                setState(() => hiddenIds.add(id));
+                _scheduleAutoHide();
+              },
               icon: const Icon(Icons.close_rounded, size: 17, color: muted),
             ),
         ],
@@ -2366,13 +2411,179 @@ class _TeamsPageState extends State<TeamsPage> {
   }
 
   Map<String, int> get gameCounts {
-    final result = <String, int>{for (final game in games) game: 0};
+    final result = <String, int>{for (final game in allGames) game: 0};
     for (final raw in teams) {
       final team = Map<String, dynamic>.from(raw as Map);
       final game = '${team['game']}';
       if (result.containsKey(game)) result[game] = (result[game] ?? 0) + 1;
     }
     return result;
+  }
+
+  void openSearchFilters() {
+    String platformFilter = selected == null ? '전체' : gamePlatform(selected!);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final source = platformFilter == 'PC'
+              ? pcGames
+              : platformFilter == '모바일'
+                  ? mobileGames
+                  : allGames;
+          return SafeArea(
+            top: false,
+            child: Container(
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * .78),
+              decoration: const BoxDecoration(
+                color: panel,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                border: Border(top: BorderSide(color: line)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(99)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 14, 10),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: purple.withAlpha(22),
+                            borderRadius: BorderRadius.circular(13),
+                            border: Border.all(color: purple.withAlpha(70)),
+                          ),
+                          child: const Icon(Icons.grid_view_rounded, color: purpleSoft),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('게임 목록 · 필터', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                              SizedBox(height: 2),
+                              Text('원하는 게임만 골라서 파티를 찾아보세요.', style: TextStyle(color: muted, fontSize: 11)),
+                            ],
+                          ),
+                        ),
+                        IconButton(onPressed: () => Navigator.pop(sheetContext), icon: const Icon(Icons.close_rounded)),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: ['전체', 'PC', '모바일'].map((value) {
+                        final active = platformFilter == value;
+                        return Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: value == '모바일' ? 0 : 8),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () => setSheetState(() => platformFilter = value),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 180),
+                                height: 42,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: active ? purple.withAlpha(30) : panelSoft,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: active ? purple.withAlpha(150) : line),
+                                ),
+                                child: Text(value, style: TextStyle(color: active ? Colors.white : muted, fontWeight: FontWeight.w800, fontSize: 12)),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: GridView.builder(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+                      shrinkWrap: true,
+                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 260,
+                        mainAxisExtent: 68,
+                        mainAxisSpacing: 9,
+                        crossAxisSpacing: 9,
+                      ),
+                      itemCount: source.length,
+                      itemBuilder: (context, index) {
+                        final game = source[index];
+                        final active = selected == game;
+                        final accent = gameAccent(game);
+                        final count = gameCounts[game] ?? 0;
+                        return InkWell(
+                          onTap: () {
+                            setState(() => selected = game);
+                            Navigator.pop(sheetContext);
+                          },
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: active ? accent.withAlpha(20) : panelSoft,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: active ? accent.withAlpha(165) : line),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Row(
+                              children: [
+                                SizedBox(width: 74, height: double.infinity, child: _GameArtwork(game: game)),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(gameDisplayName(game), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900)),
+                                        const SizedBox(height: 4),
+                                        Text('${gamePlatform(game)} · $count LIVE', style: TextStyle(color: count > 0 ? mint : muted, fontSize: 9.5, fontWeight: FontWeight.w700)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (active) Padding(padding: const EdgeInsets.only(right: 10), child: Icon(Icons.check_circle_rounded, color: accent, size: 20)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() => selected = null);
+                          Navigator.pop(sheetContext);
+                        },
+                        icon: const Icon(Icons.apps_rounded),
+                        label: const Text('전체 파티 보기'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget buildPartyGrid() {
@@ -2486,10 +2697,16 @@ class _TeamsPageState extends State<TeamsPage> {
               TextField(
                 controller: query,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: '게임, 모드, 파티 소개, 방장 검색',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  suffixIcon: Icon(Icons.tune_rounded),
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: Tooltip(
+                    message: '게임 목록 · 필터',
+                    child: IconButton(
+                      onPressed: openSearchFilters,
+                      icon: const Icon(Icons.tune_rounded),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 18),
@@ -3561,6 +3778,75 @@ class _MiniBadge extends StatelessWidget {
   }
 }
 
+class _PlatformSelectCard extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final int gameCount;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PlatformSelectCard({
+    required this.label,
+    required this.icon,
+    required this.gameCount,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = label == 'PC 게임' ? mint : warning;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: BoxDecoration(
+          gradient: selected
+              ? LinearGradient(colors: [accent.withAlpha(34), purple.withAlpha(18)])
+              : null,
+          color: selected ? null : panelSoft,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: selected ? accent.withAlpha(170) : line, width: selected ? 1.6 : 1),
+          boxShadow: selected ? [BoxShadow(color: accent.withAlpha(28), blurRadius: 18, offset: const Offset(0, 7))] : null,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: accent.withAlpha(selected ? 36 : 18),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: selected ? accent : muted, size: 20),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: TextStyle(color: selected ? Colors.white : const Color(0xFFD5D8E2), fontSize: 12, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 2),
+                  Text('$gameCount개 게임', style: const TextStyle(color: muted, fontSize: 9.5)),
+                ],
+              ),
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: selected
+                  ? Icon(Icons.check_circle_rounded, key: const ValueKey('on'), color: accent, size: 20)
+                  : const Icon(Icons.chevron_right_rounded, key: ValueKey('off'), color: muted, size: 20),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CreateGameTile extends StatefulWidget {
   final String game;
   final bool selected;
@@ -3587,65 +3873,90 @@ class _CreateGameTileState extends State<_CreateGameTile> {
         scale: hover ? 1.025 : 1,
         child: InkWell(
           onTap: widget.onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(19),
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 190),
-            height: 86,
+            duration: const Duration(milliseconds: 200),
             decoration: BoxDecoration(
               color: panelSoft,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(19),
               border: Border.all(
-                color: widget.selected ? accent : hover ? accent.withAlpha(120) : line,
+                color: widget.selected ? accent : hover ? accent.withAlpha(130) : line,
                 width: widget.selected ? 2 : 1,
               ),
               boxShadow: widget.selected || hover
-                  ? [BoxShadow(color: accent.withAlpha(34), blurRadius: 17, offset: const Offset(0, 7))]
-                  : null,
+                  ? [BoxShadow(color: accent.withAlpha(widget.selected ? 52 : 34), blurRadius: 22, offset: const Offset(0, 8))]
+                  : [const BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))],
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(17),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _GameArtwork(game: widget.game),
+                  AnimatedScale(
+                    scale: hover ? 1.06 : 1,
+                    duration: const Duration(milliseconds: 320),
+                    child: _GameArtwork(game: widget.game),
+                  ),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black.withAlpha(215)],
+                        colors: [Colors.black.withAlpha(8), Colors.black.withAlpha(70), Colors.black.withAlpha(230)],
+                        stops: const [0, .45, 1],
                       ),
                     ),
                   ),
                   Positioned(
-                    left: 10,
-                    right: 9,
-                    bottom: 8,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                gameDisplayName(widget.game),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
-                              ),
-                              Text(gamePlatform(widget.game), style: const TextStyle(color: muted, fontSize: 9)),
-                            ],
-                          ),
+                    left: 9,
+                    top: 9,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(145),
+                        borderRadius: BorderRadius.circular(99),
+                        border: Border.all(color: accent.withAlpha(100)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(gamePlatform(widget.game) == 'PC' ? Icons.computer_rounded : Icons.phone_android_rounded, color: accent, size: 11),
+                          const SizedBox(width: 4),
+                          Text(gamePlatform(widget.game), style: TextStyle(color: accent, fontSize: 8.5, fontWeight: FontWeight.w900)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (widget.selected)
+                    Positioned(
+                      right: 9,
+                      top: 9,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(99),
+                          boxShadow: [BoxShadow(color: accent.withAlpha(90), blurRadius: 12)],
                         ),
-                        if (widget.selected)
-                          Container(
-                            width: 18,
-                            height: 18,
-                            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-                            child: const Icon(Icons.check_rounded, size: 12, color: bg),
-                          ),
-                      ],
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_rounded, size: 11, color: bg),
+                            SizedBox(width: 3),
+                            Text('선택됨', style: TextStyle(color: bg, fontSize: 8.5, fontWeight: FontWeight.w900)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    left: 11,
+                    right: 10,
+                    bottom: 10,
+                    child: Text(
+                      gameDisplayName(widget.game),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, shadows: [Shadow(color: Colors.black87, blurRadius: 5)]),
                     ),
                   ),
                 ],
@@ -3816,11 +4127,12 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: ChoiceChip(
-                        avatar: const Icon(Icons.computer_rounded, size: 17),
-                        label: const Text('PC 게임'),
+                      child: _PlatformSelectCard(
+                        label: 'PC 게임',
+                        icon: Icons.computer_rounded,
+                        gameCount: pcGames.length,
                         selected: platform == 'PC',
-                        onSelected: (_) {
+                        onTap: () {
                           setState(() {
                             platform = 'PC';
                             if (!pcGames.contains(game)) {
@@ -3831,13 +4143,14 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                         },
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 9),
                     Expanded(
-                      child: ChoiceChip(
-                        avatar: const Icon(Icons.phone_android_rounded, size: 17),
-                        label: const Text('모바일 게임'),
+                      child: _PlatformSelectCard(
+                        label: '모바일 게임',
+                        icon: Icons.phone_android_rounded,
+                        gameCount: mobileGames.length,
                         selected: platform == '모바일',
-                        onSelected: (_) {
+                        onTap: () {
                           setState(() {
                             platform = '모바일';
                             if (!mobileGames.contains(game)) {
@@ -3871,10 +4184,10 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 190,
-                      childAspectRatio: 1.85,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
+                      maxCrossAxisExtent: 210,
+                      childAspectRatio: 1.82,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
                     ),
                     itemCount: visibleGames.length,
                     itemBuilder: (context, index) {
