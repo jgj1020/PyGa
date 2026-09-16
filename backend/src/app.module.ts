@@ -4,6 +4,8 @@ import { AuthModule } from "./auth/auth.module.js";
 import { User } from "./users/user.entity.js";
 import { CommunityModule } from "./community/community.module.js";
 import { AdminModule } from "./admin/admin.module.js";
+import { GamesModule } from "./games/games.module.js";
+import { MaintenanceModule } from "./maintenance/maintenance.module.js";
 
 @Module({
   imports: [
@@ -20,6 +22,8 @@ import { AdminModule } from "./admin/admin.module.js";
     AuthModule,
     CommunityModule,
     AdminModule,
+    GamesModule,
+    MaintenanceModule,
   ],
 })
 export class AppModule {}

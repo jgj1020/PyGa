@@ -11,13 +11,25 @@ import { UsersService } from "../users/users.service.js";
 import { RegisterDto } from "./dto/register.dto.js";
 import { LoginDto } from "./dto/login.dto.js";
 import { communityEvents } from "../community/events.js";
+import { MaintenanceService } from "../maintenance/maintenance.service.js";
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
+    private readonly maintenance: MaintenanceService,
   ) {}
+
+
+  private async assertServiceAvailable() {
+    const status = await this.maintenance.status();
+    if (status.active) {
+      throw new ForbiddenException(
+        status.message ?? "현재 PyGa 점검 중입니다. 점검 종료 후 다시 이용해주세요.",
+      );
+    }
+  }
 
   private assertNotSuspended(user: any) {
     const reason = user.suspensionReason ? ` 사유: ${user.suspensionReason}` : "";
@@ -31,6 +43,7 @@ export class AuthService {
   }
 
   async register(registerDto: RegisterDto) {
+    await this.assertServiceAvailable();
     const { nickname, password } = registerDto;
     const email = registerDto.email.trim().toLowerCase();
     if (Buffer.byteLength(password, "utf8") > 72) {
@@ -97,6 +110,7 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
+    await this.assertServiceAvailable();
     const user = await this.validate(loginDto);
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,

@@ -4,9 +4,11 @@ import { UsersModule } from "../users/users.module.js";
 import { AuthController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
 import { SessionGuard } from "./session.guard.js";
+import { MaintenanceModule } from "../maintenance/maintenance.module.js";
 @Module({
   imports: [
     UsersModule,
+    MaintenanceModule,
     JwtModule.registerAsync({
       useFactory: () => {
         const secret = process.env.JWT_SECRET;

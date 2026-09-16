@@ -56,12 +56,277 @@ const mobileGames = <String>[
 const allGames = <String>[...pcGames, ...mobileGames];
 const modes = ['경쟁전', '일반전', '칼바람 나락', '자유 플레이'];
 
-const gameArtwork = <String, String>{
-  'League of Legends': 'assets/games/league.jpg',
-  'VALORANT': 'assets/games/valorant.jpg',
-  '배틀그라운드': 'assets/games/pubg.jpg',
-  'FC Online': 'assets/games/fc_online.jpg',
-};
+
+class GameCoverStore {
+  static final ValueNotifier<Map<String, String>> covers = ValueNotifier(<String, String>{});
+  static bool _loading = false;
+  static bool _loaded = false;
+
+  static Future<void> ensureLoaded({bool force = false}) async {
+    if (_loading || (_loaded && !force)) return;
+    _loading = true;
+    try {
+      final result = await Api.request('GET', '/games/covers');
+      final rows = result is Map ? result['covers'] : null;
+      if (rows is List) {
+        final next = <String, String>{};
+        for (final row in rows) {
+          if (row is! Map) continue;
+          final game = '${row['game'] ?? ''}'.trim();
+          final url = '${row['coverUrl'] ?? ''}'.trim();
+          if (game.isNotEmpty && url.startsWith('https://')) next[game] = url;
+        }
+        covers.value = next;
+      }
+    } catch (_) {
+      // API 키가 아직 없거나 외부 API가 잠시 실패하면 저작권 부담이 적은 기본 게임 아이콘을 사용합니다.
+    } finally {
+      _loaded = true;
+      _loading = false;
+    }
+  }
+}
+
+final GlobalKey<NavigatorState> pygaNavigatorKey = GlobalKey<NavigatorState>();
+
+class MaintenanceState {
+  final bool known;
+  final bool active;
+  final String title;
+  final String message;
+
+  const MaintenanceState({
+    this.known = true,
+    required this.active,
+    this.title = 'PyGa 점검 중',
+    this.message = '서비스 안정화를 위한 점검이 진행 중입니다.',
+  });
+}
+
+class MaintenanceStore {
+  static final ValueNotifier<MaintenanceState> state =
+      ValueNotifier(const MaintenanceState(known: false, active: false));
+  static Timer? _timer;
+  static bool _checking = false;
+
+  static void start() {
+    _timer ??= Timer.periodic(const Duration(seconds: 3), (_) => check());
+    unawaited(check());
+  }
+
+  static Future<void> check() async {
+    if (_checking) return;
+    _checking = true;
+    try {
+      final raw = await Api.request('GET', '/maintenance/status')
+          .timeout(const Duration(seconds: 12));
+      if (raw is Map) {
+        final active = raw['active'] == true;
+        state.value = MaintenanceState(
+          known: true,
+          active: active,
+          title: '${raw['title'] ?? 'PyGa 점검 중'}',
+          message: '${raw['message'] ?? '서비스 안정화를 위한 점검이 진행 중입니다.'}',
+        );
+      } else if (!state.value.known) {
+        // 예상하지 못한 응답이어도 시작 화면에서 무한 대기하지 않습니다.
+        state.value = const MaintenanceState(known: true, active: false);
+      }
+    } catch (_) {
+      // Render가 깨어나는 중이거나 이전 백엔드가 아직 배포된 경우에도
+      // 시작 화면에서 무한 대기하지 않고 앱을 열어 둡니다.
+      // 주기적인 check()가 계속 실행되어 서버가 준비되면 점검 상태가 즉시 반영됩니다.
+      if (!state.value.known) {
+        state.value = const MaintenanceState(known: true, active: false);
+      }
+    } finally {
+      _checking = false;
+    }
+  }
+}
+
+class MaintenanceGate extends StatefulWidget {
+  final Widget child;
+  const MaintenanceGate({super.key, required this.child});
+
+  @override
+  State<MaintenanceGate> createState() => _MaintenanceGateState();
+}
+
+class _MaintenanceGateState extends State<MaintenanceGate> {
+  bool adminLoginBypass = false;
+
+  @override
+  void initState() {
+    super.initState();
+    MaintenanceStore.start();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<MaintenanceState>(
+      valueListenable: MaintenanceStore.state,
+      builder: (context, status, _) {
+        final isAdmin = Api.user['isAdmin'] == true;
+        if (isAdmin || adminLoginBypass) return widget.child;
+        if (!status.known) {
+          return const Material(
+            color: bg,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  BrandMark(size: 92),
+                  SizedBox(height: 22),
+                  CircularProgressIndicator(color: mint),
+                  SizedBox(height: 14),
+                  Text('서버 상태 확인 중…', style: TextStyle(color: muted)),
+                ],
+              ),
+            ),
+          );
+        }
+        if (!status.active) return widget.child;
+
+        return Material(
+          color: bg,
+          child: Stack(
+            children: [
+              const Positioned.fill(child: _AmbientBackground(intensity: .75)),
+              SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 520),
+                      child: GlowCard(
+                        borderColor: danger.withAlpha(140),
+                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 22),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const BrandMark(size: 96),
+                            const SizedBox(height: 22),
+                            Container(
+                              width: 62,
+                              height: 62,
+                              decoration: BoxDecoration(
+                                color: danger.withAlpha(24),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: danger.withAlpha(110)),
+                              ),
+                              child: const Icon(Icons.build_circle_rounded, color: danger, size: 34),
+                            ),
+                            const SizedBox(height: 18),
+                            Text(
+                              status.title,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              status.message,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Color(0xFFD3D7E2), height: 1.55),
+                            ),
+                            const SizedBox(height: 18),
+                            const Text(
+                              '관리자가 점검 종료를 알리면 자동으로 다시 이용할 수 있습니다.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: muted, fontSize: 12.5),
+                            ),
+                            const SizedBox(height: 14),
+                            OutlinedButton.icon(
+                              onPressed: MaintenanceStore.check,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('점검 상태 다시 확인'),
+                            ),
+                            const SizedBox(height: 6),
+                            TextButton.icon(
+                              onPressed: () async {
+                                setState(() => adminLoginBypass = true);
+                                await Future<void>.delayed(Duration.zero);
+                                await pygaNavigatorKey.currentState?.push(
+                                  MaterialPageRoute(builder: (_) => const AdminLoginPage()),
+                                );
+                                if (mounted) {
+                                  setState(() => adminLoginBypass = false);
+                                }
+                              },
+                              icon: const Icon(Icons.admin_panel_settings_outlined, size: 17),
+                              label: const Text('관리자 로그인'),
+                              style: TextButton.styleFrom(foregroundColor: muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GameArtwork extends StatelessWidget {
+  final String game;
+  final BoxFit fit;
+  final Alignment alignment;
+  final FilterQuality filterQuality;
+
+  const _GameArtwork({
+    super.key,
+    required this.game,
+    this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
+    this.filterQuality = FilterQuality.high,
+  });
+
+  Widget _fallback() {
+    final accent = gameAccent(game);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent.withAlpha(115), panelSoft, bg],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          gamePlatform(game) == '모바일'
+              ? Icons.phone_android_rounded
+              : Icons.sports_esports_rounded,
+          size: 62,
+          color: Colors.white.withAlpha(185),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Map<String, String>>(
+      valueListenable: GameCoverStore.covers,
+      builder: (context, covers, _) {
+        final url = covers[game];
+        if (url == null || url.isEmpty) return _fallback();
+        return Image.network(
+          url,
+          fit: fit,
+          alignment: alignment,
+          filterQuality: filterQuality,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => _fallback(),
+        );
+      },
+    );
+  }
+}
 
 String gamePlatform(String game) => mobileGames.contains(game) ? '모바일' : 'PC';
 
@@ -409,8 +674,12 @@ class PyGaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: pygaNavigatorKey,
       title: 'PyGa',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => MaintenanceGate(
+        child: child ?? const SizedBox.shrink(),
+      ),
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
@@ -617,6 +886,7 @@ class _AuthPageState extends State<AuthPage> {
   void initState() {
     super.initState();
     unawaited(Api.warmup());
+    unawaited(GameCoverStore.ensureLoaded());
   }
 
   @override
@@ -634,6 +904,8 @@ class _AuthPageState extends State<AuthPage> {
     try {
       if (register) {
         await Api.register(nickname.text, email.text, password.text);
+        unawaited(MaintenanceStore.check());
+        unawaited(GameCoverStore.ensureLoaded(force: true));
         if (!mounted) return;
         successNotice(context, '회원가입 완료', '계정이 만들어졌어요. 바로 PyGa를 시작합니다!');
         Navigator.of(context).pushAndRemoveUntil(
@@ -642,6 +914,8 @@ class _AuthPageState extends State<AuthPage> {
         );
       } else {
         await Api.login(email.text, password.text);
+        unawaited(MaintenanceStore.check());
+        unawaited(GameCoverStore.ensureLoaded(force: true));
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const MainPage()),
@@ -838,6 +1112,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     setState(() => busy = true);
     try {
       await Api.adminLogin(email.text, password.text);
+      await MaintenanceStore.check();
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const AdminDashboardPage()),
@@ -1457,7 +1732,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           if (items.isEmpty)
             const GlowCard(child: Text('공지 기록이 없습니다.', style: TextStyle(color: muted)))
           else
-            ...items.map((a) => _AdminAnnouncementCard(item: a, onClose: a['active'] == true ? () => closeAnnouncement(a) : null)),
+            ...items.map((a) => _AdminAnnouncementCard(
+                  item: a,
+                  onClose: a['active'] == true && a['kind'] != 'maintenance'
+                      ? () => closeAnnouncement(a)
+                      : null,
+                )),
         ],
       );
 }
@@ -2476,12 +2756,11 @@ class _HomeGameHeroState extends State<_HomeGameHero> with SingleTickerProviderS
                   duration: const Duration(milliseconds: 650),
                   switchInCurve: Curves.easeOutCubic,
                   switchOutCurve: Curves.easeInCubic,
-                  child: Image.asset(
-                    gameArtwork[game]!,
+                  child: _GameArtwork(
+                    game: game,
                     key: ValueKey(game),
                     fit: BoxFit.cover,
                     alignment: Alignment.center,
-                    filterQuality: FilterQuality.high,
                   ),
                 ),
                 DecoratedBox(
@@ -2653,13 +2932,16 @@ class _HomeGameHeroState extends State<_HomeGameHero> with SingleTickerProviderS
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(color: selected ? accent : Colors.white.withAlpha(55), width: selected ? 2 : 1),
-                                image: DecorationImage(image: AssetImage(gameArtwork[games[index]]!), fit: BoxFit.cover),
                                 boxShadow: selected ? [BoxShadow(color: accent.withAlpha(55), blurRadius: 12)] : null,
                               ),
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(10),
-                                  color: selected ? Colors.transparent : Colors.black.withAlpha(55),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    _GameArtwork(game: games[index]),
+                                    if (!selected) Container(color: Colors.black.withAlpha(55)),
+                                  ],
                                 ),
                               ),
                             ),
@@ -2822,7 +3104,7 @@ class _GamePosterCardState extends State<_GamePosterCard> {
                     scale: hover ? 1.06 : 1,
                     duration: const Duration(milliseconds: 350),
                     curve: Curves.easeOutCubic,
-                    child: Image.asset(gameArtwork[widget.game]!, fit: BoxFit.cover, filterQuality: FilterQuality.high),
+                    child: _GameArtwork(game: widget.game),
                   ),
                   DecoratedBox(
                     decoration: BoxDecoration(
@@ -2903,7 +3185,6 @@ class _TeamCardState extends State<TeamCard> {
     final unread = (team['unreadCount'] as num?)?.toInt() ?? 0;
     final isPrivate = team['isPrivate'] == true;
     final game = '${team['game']}';
-    final artwork = gameArtwork[game];
     final accent = gameAccent(game);
 
     return LayoutBuilder(
@@ -2959,32 +3240,11 @@ class _TeamCardState extends State<TeamCard> {
                             scale: !compact && hover ? 1.055 : 1,
                             duration: const Duration(milliseconds: 420),
                             curve: Curves.easeOutCubic,
-                            child: artwork != null
-                                ? Image.asset(
-                                    artwork,
-                                    fit: BoxFit.cover,
-                                    alignment: Alignment.center,
-                                    filterQuality: FilterQuality.high,
-                                  )
-                                : DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [accent.withAlpha(105), panelSoft, bg],
-                                      ),
-                                    ),
-                                    child: Align(
-                                      alignment: const Alignment(.68, -.15),
-                                      child: Icon(
-                                        gamePlatform(game) == '모바일'
-                                            ? Icons.phone_android_rounded
-                                            : Icons.sports_esports_rounded,
-                                        size: compact ? 72 : 56,
-                                        color: accent.withAlpha(175),
-                                      ),
-                                    ),
-                                  ),
+                            child: _GameArtwork(
+                              game: game,
+                              fit: BoxFit.cover,
+                              alignment: Alignment.center,
+                            ),
                           ),
                           DecoratedBox(
                             decoration: BoxDecoration(
@@ -3318,7 +3578,6 @@ class _CreateGameTileState extends State<_CreateGameTile> {
   @override
   Widget build(BuildContext context) {
     final accent = gameAccent(widget.game);
-    final artwork = gameArtwork[widget.game];
     return MouseRegion(
       onEnter: (_) => setState(() => hover = true),
       onExit: (_) => setState(() => hover = false),
@@ -3348,27 +3607,7 @@ class _CreateGameTileState extends State<_CreateGameTile> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (artwork != null)
-                    Image.asset(artwork, fit: BoxFit.cover, filterQuality: FilterQuality.high)
-                  else
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [accent.withAlpha(90), panelSoft, bg],
-                        ),
-                      ),
-                    ),
-                  if (artwork == null)
-                    Align(
-                      alignment: const Alignment(.72, -.55),
-                      child: Icon(
-                        gamePlatform(widget.game) == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded,
-                        size: 34,
-                        color: accent.withAlpha(190),
-                      ),
-                    ),
+                  _GameArtwork(game: widget.game),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -3499,7 +3738,6 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
 
   @override
   Widget build(BuildContext context) {
-    final artwork = gameArtwork[game];
     return Scaffold(
       appBar: AppBar(title: const Text('파티 만들기', style: TextStyle(fontWeight: FontWeight.w900))),
       body: ListView(
@@ -3517,27 +3755,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (artwork != null)
-                    Image.asset(artwork, fit: BoxFit.cover, filterQuality: FilterQuality.high)
-                  else
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [gameAccent(game).withAlpha(120), panelSoft, bg],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                      ),
-                    ),
-                  if (artwork == null)
-                    Align(
-                      alignment: const Alignment(.75, -.2),
-                      child: Icon(
-                        platform == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded,
-                        size: 78,
-                        color: gameAccent(game).withAlpha(160),
-                      ),
-                    ),
+                  _GameArtwork(game: game),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -3668,7 +3886,13 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                       );
                     },
                   ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 8),
+                const Text(
+                  '게임 정보 및 커버 이미지 제공: RAWG',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(color: muted, fontSize: 10.5),
+                ),
+                const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
                   key: ValueKey('mode-$game'),
                   initialValue: mode,

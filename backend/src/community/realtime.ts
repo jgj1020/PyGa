@@ -4,6 +4,7 @@ import { SessionGuard } from "../auth/session.guard.js";
 import { AdminService } from "../admin/admin.service.js";
 import { CommunityService, positiveId } from "./community.service.js";
 import { communityEvents } from "./events.js";
+import { MaintenanceService } from "../maintenance/maintenance.service.js";
 
 type CorsOriginChecker = (
   origin: string | undefined,
@@ -18,12 +19,24 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
   const auth = app.get(SessionGuard);
   const service = app.get(CommunityService);
   const adminService = app.get(AdminService);
+  const maintenance = app.get(MaintenanceService);
 
   communityEvents.on("admin:update", (event) => {
     io.to("admins").emit("admin:update", event);
   });
-  communityEvents.on("announcement:update", (event) => {
+  communityEvents.on("announcement:update", async (event: any) => {
     io.emit("announcement:update", event);
+    io.emit("maintenance:update", event);
+
+    // 점검 시작 시 일반 사용자 실시간 연결도 즉시 끊어 채팅/음성 사용을 막습니다.
+    if (event?.type === "created" && event?.announcement?.kind === "maintenance") {
+      const clients = await io.fetchSockets();
+      for (const client of clients) {
+        if (client.data.session?.admin === true) continue;
+        client.emit("maintenance:locked", event.announcement);
+        client.disconnect(true);
+      }
+    }
   });
   communityEvents.on("moderation:update", async (event: any) => {
     io.to("admins").emit("admin:update", event);
@@ -39,6 +52,11 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
   io.use(async (socket, next) => {
     try {
       socket.data.session = await auth.verify(socket.handshake.auth?.token);
+      const status = await maintenance.status();
+      if (status.active && socket.data.session?.admin !== true) {
+        next(new Error(status.message ?? "현재 PyGa 점검 중입니다."));
+        return;
+      }
       next();
     } catch {
       next(new Error("다시 로그인해주세요."));
@@ -72,6 +90,15 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
         const s = socket.data.session;
         if (!s || s.exp * 1000 <= Date.now()) {
           throw new HttpException("다시 로그인해주세요.", 401);
+        }
+        if (s.admin !== true) {
+          const status = await maintenance.status();
+          if (status.active) {
+            throw new HttpException(
+              status.message ?? "현재 PyGa 점검 중입니다.",
+              503,
+            );
+          }
         }
         ack({ ok: true, data: await action(s.sub) });
       } catch (e) {

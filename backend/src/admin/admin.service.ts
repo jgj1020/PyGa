@@ -7,6 +7,7 @@ import {
 import { DataSource } from "typeorm";
 import { boundedText, positiveId } from "../community/community.service.js";
 import { communityEvents } from "../community/events.js";
+import { MaintenanceService } from "../maintenance/maintenance.service.js";
 
 function suspensionSpec(value: unknown): { permanent: boolean; until: Date | null; label: string } {
   const key = String(value ?? "").trim();
@@ -27,7 +28,10 @@ function suspensionSpec(value: unknown): { permanent: boolean; until: Date | nul
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly db: DataSource) {}
+  constructor(
+    private readonly db: DataSource,
+    private readonly maintenance: MaintenanceService,
+  ) {}
 
   async requireAdmin(uid: number) {
     const [user] = await this.db.query(
@@ -177,6 +181,7 @@ export class AdminService {
       );
       return result;
     });
+    this.maintenance.invalidate();
     communityEvents.emit("announcement:update", { type: "created", announcement: row });
     communityEvents.emit("admin:update", { type: "announcement_created", announcementId: row.id });
     return row;
@@ -185,12 +190,22 @@ export class AdminService {
   async closeAnnouncement(adminId: number, rawId: unknown) {
     await this.requireAdmin(adminId);
     const id = positiveId(rawId);
+    const [current] = await this.db.query(
+      `SELECT id,title,kind,active FROM announcements WHERE id=$1`,
+      [id],
+    );
+    if (!current) throw new NotFoundException("공지를 찾을 수 없습니다.");
+    if (current.active && current.kind === "maintenance") {
+      throw new BadRequestException(
+        "점검 중 상태는 '점검 종료' 공지를 전송해야 해제할 수 있습니다.",
+      );
+    }
     const [row] = await this.db.query(
       `UPDATE announcements SET active=false WHERE id=$1
        RETURNING id,title,kind,active`,
       [id],
     );
-    if (!row) throw new NotFoundException("공지를 찾을 수 없습니다.");
+    this.maintenance.invalidate();
     communityEvents.emit("announcement:update", { type: "closed", announcementId: id });
     communityEvents.emit("admin:update", { type: "announcement_closed", announcementId: id });
     return row;
