@@ -29,6 +29,34 @@ export function boundedText(value: unknown, max: number, min = 1): string {
   return value.trim();
 }
 
+function gameProfileLimits(game: string) {
+  switch (game) {
+    case "League of Legends":
+    case "VALORANT":
+    case "오버워치 2":
+      return { tier: 24, level: 10 };
+    case "배틀그라운드":
+    case "배틀그라운드 모바일":
+    case "FC Online":
+    case "브롤스타즈":
+    case "클래시 로얄":
+      return { tier: 24, level: 16 };
+    case "TFT":
+    case "TFT 모바일":
+      return { tier: 24, level: 24 };
+    case "메이플스토리":
+    case "로스트아크":
+    case "던전앤파이터":
+    case "원신":
+    case "붕괴: 스타레일":
+      return { tier: 20, level: 20 };
+    case "포켓몬 GO":
+      return { tier: 30, level: 16 };
+    default:
+      return { tier: 30, level: 24 };
+  }
+}
+
 @Injectable()
 export class CommunityService {
   constructor(private readonly db: DataSource) {}
@@ -69,23 +97,30 @@ export class CommunityService {
   }
 
   async profile(uid: number, data: any) {
-    const nickname = boundedText(data.nickname, 30, 2);
-    let avatar: string | null | undefined;
-
-    const [nicknameOwner] = await this.db.query(
-      `SELECT id
-       FROM users
-       WHERE id<>$1 AND lower(trim(nickname))=lower(trim($2))
-       LIMIT 1`,
-      [uid, nickname],
-    );
-
-    if (nicknameOwner) {
-      throw new ConflictException("이미 사용 중인 닉네임입니다.");
+    const hasNickname = data?.nickname !== undefined;
+    const hasAvatar = data?.avatar !== undefined;
+    if (!hasNickname && !hasAvatar) {
+      throw new BadRequestException("변경할 프로필 정보가 없습니다.");
     }
 
+    let nickname: string | undefined;
+    if (hasNickname) {
+      nickname = boundedText(data.nickname, 30, 2);
+      const [nicknameOwner] = await this.db.query(
+        `SELECT id
+         FROM users
+         WHERE id<>$1 AND lower(trim(nickname))=lower(trim($2))
+         LIMIT 1`,
+        [uid, nickname],
+      );
+      if (nicknameOwner) {
+        throw new ConflictException("이미 사용 중인 닉네임입니다.");
+      }
+    }
+
+    let avatar: string | null | undefined;
     if (data.avatar === null) avatar = null;
-    else if (data.avatar !== undefined) {
+    else if (hasAvatar) {
       if (
         typeof data.avatar !== "string" ||
         data.avatar.length > 2800000 ||
@@ -117,16 +152,21 @@ export class CommunityService {
     }
 
     try {
-      if (avatar === undefined) {
-        await this.db.query("UPDATE users SET nickname=$2 WHERE id=$1", [
-          uid,
-          nickname,
-        ]);
-      } else {
+      if (nickname !== undefined && hasAvatar) {
         await this.db.query(
           "UPDATE users SET nickname=$2,avatar=$3 WHERE id=$1",
           [uid, nickname, avatar],
         );
+      } else if (nickname !== undefined) {
+        await this.db.query("UPDATE users SET nickname=$2 WHERE id=$1", [
+          uid,
+          nickname,
+        ]);
+      } else if (hasAvatar) {
+        await this.db.query("UPDATE users SET avatar=$2 WHERE id=$1", [
+          uid,
+          avatar,
+        ]);
       }
     } catch (error: any) {
       const code = error?.code ?? error?.driverError?.code;
@@ -149,12 +189,13 @@ export class CommunityService {
 
   async saveGameProfile(uid: number, data: any) {
     const game = boundedText(data?.game, 40, 2);
+    const limits = gameProfileLimits(game);
     const tier = data?.tier == null || String(data.tier).trim() === ""
       ? null
-      : boundedText(String(data.tier), 60, 1);
+      : boundedText(String(data.tier), limits.tier, 1);
     const level = data?.level == null || String(data.level).trim() === ""
       ? null
-      : boundedText(String(data.level), 60, 1);
+      : boundedText(String(data.level), limits.level, 1);
     if (!tier && !level) {
       throw new BadRequestException("티어 또는 레벨 중 하나는 입력해주세요.");
     }

@@ -379,6 +379,72 @@ String tierHint(String game) {
   }
 }
 
+int tierMaxLength(String game) {
+  switch (game) {
+    case 'League of Legends':
+    case 'VALORANT':
+    case '오버워치 2':
+    case '배틀그라운드':
+    case '배틀그라운드 모바일':
+    case 'FC Online':
+    case 'TFT':
+    case 'TFT 모바일':
+    case '브롤스타즈':
+    case '클래시 로얄':
+      return 24;
+    case '메이플스토리':
+    case '로스트아크':
+    case '던전앤파이터':
+    case '원신':
+    case '붕괴: 스타레일':
+      return 20;
+    default:
+      return 30;
+  }
+}
+
+int levelMaxLength(String game) {
+  switch (game) {
+    case 'League of Legends':
+    case 'VALORANT':
+    case '오버워치 2':
+      return 10;
+    case '배틀그라운드':
+    case '배틀그라운드 모바일':
+    case 'FC Online':
+    case '브롤스타즈':
+    case '클래시 로얄':
+    case '포켓몬 GO':
+      return 16;
+    case '메이플스토리':
+    case '로스트아크':
+    case '던전앤파이터':
+    case '원신':
+    case '붕괴: 스타레일':
+      return 20;
+    default:
+      return 24;
+  }
+}
+
+String levelHint(String game) {
+  switch (game) {
+    case 'League of Legends':
+    case 'VALORANT':
+    case '오버워치 2':
+      return '예) Lv. 245';
+    case '로스트아크':
+      return '예) 아이템 Lv. 1640';
+    case '브롤스타즈':
+    case '클래시 로얄':
+      return '예) 35,000 트로피';
+    case 'FC Online':
+      return '예) 구단가치 5조';
+    default:
+      return '예) Lv. 245 / 전투력 / 트로피';
+  }
+}
+
 String gameDisplayName(String game) {
   switch (game) {
     case 'League of Legends':
@@ -678,7 +744,12 @@ class PyGaApp extends StatelessWidget {
       title: 'PyGa',
       debugShowCheckedModeBanner: false,
       builder: (context, child) => MaintenanceGate(
-        child: child ?? const SizedBox.shrink(),
+        child: Stack(
+          children: [
+            Positioned.fill(child: child ?? const SizedBox.shrink()),
+            const PersistentVoiceOverlay(),
+          ],
+        ),
       ),
       theme: ThemeData(
         useMaterial3: true,
@@ -1578,6 +1649,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   void logout() {
+    unawaited(VoiceSession.instance.leave());
     Api.logout();
     Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const AuthPage()), (_) => false);
   }
@@ -4670,14 +4742,17 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> save({bool photo = false, bool remove = false}) async {
     if (busy) return;
-    if (nickname.text.trim().length < 2 || nickname.text.trim().length > 30) {
+    final editingPhotoOnly = photo || remove;
+    if (!editingPhotoOnly &&
+        (nickname.text.trim().length < 2 || nickname.text.trim().length > 30)) {
       notice(context, '닉네임은 2~30자로 입력해주세요.');
       return;
     }
 
     setState(() => busy = true);
     try {
-      final body = <String, dynamic>{'nickname': nickname.text.trim()};
+      final body = <String, dynamic>{};
+      if (!editingPhotoOnly) body['nickname'] = nickname.text.trim();
       if (remove) body['avatar'] = null;
 
       if (photo) {
@@ -4705,7 +4780,11 @@ class _ProfilePageState extends State<ProfilePage> {
       Api.user = Map<String, dynamic>.from(user as Map);
       if (mounted) {
         setState(() {});
-        successNotice(context, '프로필 저장 완료', '변경한 프로필이 정상적으로 저장되었습니다.');
+        successNotice(
+          context,
+          editingPhotoOnly ? '프로필 사진 변경 완료' : '프로필 저장 완료',
+          editingPhotoOnly ? '프로필 사진이 정상적으로 반영되었습니다.' : '변경한 프로필이 정상적으로 저장되었습니다.',
+        );
       }
     } catch (e) {
       if (mounted) notice(context, e);
@@ -4740,14 +4819,22 @@ class _ProfilePageState extends State<ProfilePage> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: tier,
-                  maxLength: 60,
-                  decoration: InputDecoration(labelText: '티어 / 랭크', hintText: tierHint(selectedGame), counterText: ''),
+                  maxLength: tierMaxLength(selectedGame),
+                  decoration: InputDecoration(
+                    labelText: '티어 / 랭크',
+                    hintText: tierHint(selectedGame),
+                    helperText: '최대 ${tierMaxLength(selectedGame)}자',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: level,
-                  maxLength: 60,
-                  decoration: const InputDecoration(labelText: '레벨 / 전투력 / 트로피 등', hintText: '예) Lv. 245 / 35,000 트로피', counterText: ''),
+                  maxLength: levelMaxLength(selectedGame),
+                  decoration: InputDecoration(
+                    labelText: '레벨 / 전투력 / 트로피 등',
+                    hintText: levelHint(selectedGame),
+                    helperText: '최대 ${levelMaxLength(selectedGame)}자',
+                  ),
                 ),
               ],
             ),
@@ -4758,6 +4845,14 @@ class _ProfilePageState extends State<ProfilePage> {
               onPressed: () {
                 if (tier.text.trim().isEmpty && level.text.trim().isEmpty) {
                   notice(context, '티어 또는 레벨 중 하나는 입력해주세요.');
+                  return;
+                }
+                if (tier.text.trim().length > tierMaxLength(selectedGame)) {
+                  notice(context, '티어/랭크는 ${tierMaxLength(selectedGame)}자 이하로 입력해주세요.');
+                  return;
+                }
+                if (level.text.trim().length > levelMaxLength(selectedGame)) {
+                  notice(context, '레벨 정보는 ${levelMaxLength(selectedGame)}자 이하로 입력해주세요.');
                   return;
                 }
                 Navigator.pop(context, {
@@ -4804,6 +4899,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void logout() {
+    unawaited(VoiceSession.instance.leave());
     Api.logout();
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AuthPage()),
@@ -4822,13 +4918,38 @@ class _ProfilePageState extends State<ProfilePage> {
             borderColor: purple.withAlpha(70),
             child: Column(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [purple, mint])),
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: const BoxDecoration(color: panel, shape: BoxShape.circle),
-                    child: Avatar(Api.user['avatar'], radius: 48),
+                GestureDetector(
+                  onTap: busy ? null : () => save(photo: true),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(colors: [purple, mint]),
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: const BoxDecoration(color: panel, shape: BoxShape.circle),
+                          child: Avatar(Api.user['avatar'], radius: 48),
+                        ),
+                      ),
+                      Positioned(
+                        right: -2,
+                        bottom: -2,
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: mint,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: panel, width: 3),
+                          ),
+                          child: const Icon(Icons.camera_alt_rounded, color: bg, size: 17),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 15),
@@ -4932,9 +5053,10 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   late final io.Socket socket;
   final draft = TextEditingController();
+  final draftFocus = FocusNode();
   final scroll = ScrollController();
 
   List<Map<String, dynamic>> messages = [];
@@ -4957,6 +5079,10 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    draftFocus.addListener(() {
+      if (draftFocus.hasFocus) bottom();
+    });
     socket = io.io(
       Api.base,
       io.OptionBuilder()
@@ -5012,6 +5138,7 @@ class _ChatPageState extends State<ChatPage> {
     socket.on('account:deleted', (_) {
       if (!mounted || closing) return;
       closing = true;
+      unawaited(VoiceSession.instance.leave());
       Api.logout();
       notice(context, '관리자에 의해 계정이 삭제되었습니다.', warningNotice: true, title: '계정 알림');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5034,6 +5161,7 @@ class _ChatPageState extends State<ChatPage> {
     socket.on('moderation:update', (dynamic raw) {
       if (!mounted || raw is! Map || raw['type'] != 'suspended') return;
       closing = true;
+      unawaited(VoiceSession.instance.leave());
       Api.logout();
       notice(context, '관리자에 의해 이용 정지가 적용되었습니다. 사유: ${raw['reason'] ?? '운영 정책 위반'}', warningNotice: true, title: '계정 이용 정지');
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5292,6 +5420,7 @@ class _ChatPageState extends State<ChatPage> {
 
   void exitChat(String message) {
     if (!mounted || closing) return;
+    unawaited(VoiceSession.instance.leaveIfTeam(teamId));
     closing = true;
     notice(context, message, warningNotice: true, title: '파티 알림');
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5300,9 +5429,17 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   @override
+  void didChangeMetrics() {
+    if (!mounted || !draftFocus.hasFocus) return;
+    bottom();
+  }
+
+  @override
   void dispose() {
     generation++;
+    WidgetsBinding.instance.removeObserver(this);
     socket.dispose();
+    draftFocus.dispose();
     draft.dispose();
     scroll.dispose();
     super.dispose();
@@ -5311,6 +5448,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         titleSpacing: 6,
         title: Column(
@@ -5340,16 +5478,23 @@ class _ChatPageState extends State<ChatPage> {
             IconButton(
               tooltip: '음성 채팅',
               onPressed: ready
-                  ? () => showModalBottomSheet(
+                  ? () {
+                      final voice = VoiceSession.instance;
+                      if (!voice.active || voice.teamId != teamId) {
+                        unawaited(
+                          voice.start(
+                            teamId: teamId,
+                            teamTitle: '${widget.team['title'] ?? '파티'}',
+                          ),
+                        );
+                      }
+                      showModalBottomSheet(
                         context: context,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,
-                        builder: (_) => VoiceRoomSheet(
-                          teamId: teamId,
-                          socket: socket,
-                          ack: ack,
-                        ),
-                      )
+                        builder: (_) => const VoiceRoomSheet(),
+                      );
+                    }
                   : null,
               icon: const Icon(Icons.mic_rounded, color: mint),
             ),
@@ -5533,8 +5678,11 @@ class _ChatPageState extends State<ChatPage> {
                       Expanded(
                         child: TextField(
                           controller: draft,
+                          focusNode: draftFocus,
                           readOnly: pending != null,
                           keyboardType: TextInputType.multiline,
+                          scrollPadding: const EdgeInsets.only(bottom: 120),
+                          onTap: bottom,
                           textInputAction: TextInputAction.newline,
                           minLines: 1,
                           maxLines: 5,
@@ -5682,51 +5830,127 @@ class _MessageBubble extends StatelessWidget {
 }
 
 
-class VoiceRoomSheet extends StatefulWidget {
-  final int teamId;
-  final io.Socket socket;
-  final Future<dynamic> Function(String event, dynamic data) ack;
+class VoiceSession extends ChangeNotifier {
+  VoiceSession._();
+  static final VoiceSession instance = VoiceSession._();
 
-  const VoiceRoomSheet({
-    super.key,
-    required this.teamId,
-    required this.socket,
-    required this.ack,
-  });
+  io.Socket? _socket;
+  MediaStream? _localStream;
+  final Map<String, RTCPeerConnection> _peers = {};
+  final Map<String, MediaStream> _remoteStreams = {};
 
-  @override
-  State<VoiceRoomSheet> createState() => _VoiceRoomSheetState();
-}
-
-class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
-  MediaStream? localStream;
-  final Map<String, RTCPeerConnection> peers = {};
-  final Map<String, MediaStream> remoteStreams = {};
-  bool loading = true;
+  int? teamId;
+  String teamTitle = '';
+  bool connecting = false;
+  bool connected = false;
   bool mutedMic = false;
+  bool deafened = false;
   bool leaving = false;
-  String status = '마이크 연결 중…';
+  String status = '연결 안 됨';
 
-  int get participantCount => peers.length + 1;
+  bool get active => teamId != null;
+  int get participantCount => active ? _peers.length + 1 : 0;
 
-  @override
-  void initState() {
-    super.initState();
-    widget.socket.on('voice:peer_joined', _onPeerJoined);
-    widget.socket.on('voice:peer_left', _onPeerLeft);
-    widget.socket.on('voice:offer', _onOffer);
-    widget.socket.on('voice:answer', _onAnswer);
-    widget.socket.on('voice:ice', _onIce);
-    unawaited(_start());
+  Future<dynamic> _ack(String event, dynamic data) {
+    final socket = _socket;
+    if (socket == null) return Future.error(Exception('음성 서버 연결이 없습니다.'));
+    final completer = Completer<dynamic>();
+    socket.emitWithAck(
+      event,
+      data,
+      ack: (dynamic response) {
+        if (completer.isCompleted) return;
+        if (response is Map && response['ok'] == true) {
+          completer.complete(response['data']);
+        } else {
+          completer.completeError(
+            Exception(response is Map ? response['error'] ?? '요청 실패' : '응답 오류'),
+          );
+        }
+      },
+    );
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => throw Exception('음성 서버 응답이 늦습니다.'),
+    );
   }
 
-  Future<void> _start() async {
+  Future<void> start({required int teamId, required String teamTitle}) async {
+    if (active && this.teamId == teamId) {
+      notifyListeners();
+      return;
+    }
+    if (active) await leave();
+
+    this.teamId = teamId;
+    this.teamTitle = teamTitle;
+    connecting = true;
+    connected = false;
+    leaving = false;
+    mutedMic = false;
+    deafened = false;
+    status = '마이크 연결 중…';
+    notifyListeners();
+
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({
+      _localStream = await navigator.mediaDevices.getUserMedia({
         'audio': true,
         'video': false,
       });
-      final raw = await widget.ack('voice:join', {'teamId': widget.teamId});
+
+      final socket = io.io(
+        Api.base,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .disableAutoConnect()
+            .enableForceNew()
+            .setAuth({'token': Api.token})
+            .build(),
+      );
+      _socket = socket;
+
+      socket.onConnect((_) {
+        if (!active) return;
+        status = '서버 연결됨 · 음성방 입장 중…';
+        connected = false;
+        notifyListeners();
+        unawaited(_joinServerRoom());
+      });
+      socket.onDisconnect((_) {
+        if (!active || leaving) return;
+        connected = false;
+        connecting = true;
+        status = '연결 끊김 · 재연결 중…';
+        unawaited(_closePeers());
+        notifyListeners();
+      });
+      socket.onConnectError((_) {
+        if (!active || leaving) return;
+        connected = false;
+        connecting = false;
+        status = '음성 서버 연결 실패';
+        notifyListeners();
+      });
+      socket.on('voice:peer_joined', _onPeerJoined);
+      socket.on('voice:peer_left', _onPeerLeft);
+      socket.on('voice:offer', _onOffer);
+      socket.on('voice:answer', _onAnswer);
+      socket.on('voice:ice', _onIce);
+      socket.connect();
+    } catch (e) {
+      connecting = false;
+      connected = false;
+      status = _cleanError(e);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _joinServerRoom() async {
+    final currentTeam = teamId;
+    if (currentTeam == null || _socket == null) return;
+    try {
+      final raw = await _ack('voice:join', {'teamId': currentTeam});
+      if (teamId != currentTeam) return;
       final data = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
       final rows = data['peers'] is List ? data['peers'] as List : const [];
       for (final item in rows) {
@@ -5734,30 +5958,28 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
         final peerId = '${item['socketId'] ?? ''}';
         if (peerId.isNotEmpty) await _offerTo(peerId);
       }
-      if (!mounted) return;
-      setState(() {
-        loading = false;
-        status = '음성 채팅 연결됨';
-      });
+      connecting = false;
+      connected = true;
+      status = '음성 연결됨';
+      notifyListeners();
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        loading = false;
-        status = _cleanError(e);
-      });
+      connecting = false;
+      connected = false;
+      status = _cleanError(e);
+      notifyListeners();
     }
   }
 
   String _cleanError(Object e) {
     final text = e.toString().replaceFirst('Exception: ', '');
     if (text.toLowerCase().contains('permission')) {
-      return '마이크 권한이 필요합니다. 기기 설정에서 PyGa 마이크 권한을 허용해주세요.';
+      return '마이크 권한이 필요합니다.';
     }
     return text;
   }
 
   Future<RTCPeerConnection> _ensurePeer(String peerId) async {
-    final existing = peers[peerId];
+    final existing = _peers[peerId];
     if (existing != null) return existing;
 
     final pc = await createPeerConnection({
@@ -5766,18 +5988,19 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
       ],
       'sdpSemantics': 'unified-plan',
     });
-    final stream = localStream;
+    final stream = _localStream;
     if (stream != null) {
       for (final track in stream.getTracks()) {
         await pc.addTrack(track, stream);
       }
     }
     pc.onIceCandidate = (candidate) {
-      if (candidate.candidate == null) return;
-      widget.socket.emitWithAck(
+      final currentTeam = teamId;
+      if (candidate.candidate == null || currentTeam == null) return;
+      _socket?.emitWithAck(
         'voice:ice',
         {
-          'teamId': widget.teamId,
+          'teamId': currentTeam,
           'target': peerId,
           'candidate': candidate.toMap(),
         },
@@ -5786,30 +6009,35 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
     };
     pc.onTrack = (event) {
       if (event.streams.isNotEmpty) {
-        remoteStreams[peerId] = event.streams.first;
+        final remote = event.streams.first;
+        _remoteStreams[peerId] = remote;
+        for (final track in remote.getAudioTracks()) {
+          track.enabled = !deafened;
+        }
       }
-      if (mounted) setState(() {});
+      notifyListeners();
     };
     pc.onConnectionState = (state) {
-      if (!mounted) return;
-      setState(() {
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-          status = '일부 음성 연결에 실패했습니다. 다시 입장해보세요.';
-        }
-      });
+      if (!active) return;
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        status = '일부 음성 연결 실패 · 재연결을 확인해주세요.';
+      }
+      notifyListeners();
     };
-    peers[peerId] = pc;
-    if (mounted) setState(() {});
+    _peers[peerId] = pc;
+    notifyListeners();
     return pc;
   }
 
   Future<void> _offerTo(String peerId) async {
+    final currentTeam = teamId;
+    if (currentTeam == null) return;
     try {
       final pc = await _ensurePeer(peerId);
       final offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await widget.ack('voice:offer', {
-        'teamId': widget.teamId,
+      await _ack('voice:offer', {
+        'teamId': currentTeam,
         'target': peerId,
         'sdp': {'sdp': offer.sdp, 'type': offer.type},
       });
@@ -5817,36 +6045,39 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
   }
 
   void _onPeerJoined(dynamic raw) {
-    if (!mounted || raw is! Map || raw['teamId'] != widget.teamId) return;
-    // 새로 들어온 사용자가 기존 사용자들에게 offer를 보냅니다.
-    setState(() {});
+    if (raw is! Map || raw['teamId'] != teamId) return;
+    notifyListeners();
   }
 
   void _onPeerLeft(dynamic raw) {
-    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    if (raw is! Map || raw['teamId'] != teamId) return;
     final peerId = '${raw['socketId'] ?? ''}';
-    final pc = peers.remove(peerId);
-    remoteStreams.remove(peerId);
-    unawaited(pc?.close() ?? Future<void>.value());
-    if (mounted) setState(() {});
+    final pc = _peers.remove(peerId);
+    _remoteStreams.remove(peerId);
+    if (pc != null) unawaited(pc.close());
+    notifyListeners();
   }
 
   void _onOffer(dynamic raw) {
-    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    if (raw is! Map || raw['teamId'] != teamId) return;
     unawaited(_answerOffer(Map<String, dynamic>.from(raw)));
   }
 
   Future<void> _answerOffer(Map<String, dynamic> raw) async {
+    final currentTeam = teamId;
+    if (currentTeam == null) return;
     try {
       final from = '${raw['from'] ?? ''}';
       final sdp = raw['sdp'];
       if (from.isEmpty || sdp is! Map) return;
       final pc = await _ensurePeer(from);
-      await pc.setRemoteDescription(RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'offer'}'));
+      await pc.setRemoteDescription(
+        RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'offer'}'),
+      );
       final answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      await widget.ack('voice:answer', {
-        'teamId': widget.teamId,
+      await _ack('voice:answer', {
+        'teamId': currentTeam,
         'target': from,
         'sdp': {'sdp': answer.sdp, 'type': answer.type},
       });
@@ -5854,7 +6085,7 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
   }
 
   void _onAnswer(dynamic raw) {
-    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    if (raw is! Map || raw['teamId'] != teamId) return;
     unawaited(_applyAnswer(Map<String, dynamic>.from(raw)));
   }
 
@@ -5863,14 +6094,16 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
       final from = '${raw['from'] ?? ''}';
       final sdp = raw['sdp'];
       if (from.isEmpty || sdp is! Map) return;
-      final pc = peers[from];
+      final pc = _peers[from];
       if (pc == null) return;
-      await pc.setRemoteDescription(RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'answer'}'));
+      await pc.setRemoteDescription(
+        RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'answer'}'),
+      );
     } catch (_) {}
   }
 
   void _onIce(dynamic raw) {
-    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    if (raw is! Map || raw['teamId'] != teamId) return;
     unawaited(_applyIce(Map<String, dynamic>.from(raw)));
   }
 
@@ -5881,126 +6114,294 @@ class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
       if (from.isEmpty || candidate is! Map) return;
       final pc = await _ensurePeer(from);
       final line = candidate['sdpMLineIndex'];
-      await pc.addCandidate(RTCIceCandidate(
-        candidate['candidate']?.toString(),
-        candidate['sdpMid']?.toString(),
-        line is num ? line.toInt() : int.tryParse('$line'),
-      ));
+      await pc.addCandidate(
+        RTCIceCandidate(
+          candidate['candidate']?.toString(),
+          candidate['sdpMid']?.toString(),
+          line is num ? line.toInt() : int.tryParse('$line'),
+        ),
+      );
     } catch (_) {}
   }
 
-  void _toggleMute() {
-    final stream = localStream;
+  void toggleMute() {
+    final stream = _localStream;
     if (stream == null) return;
-    final next = !mutedMic;
+    mutedMic = !mutedMic;
     for (final track in stream.getAudioTracks()) {
-      track.enabled = !next;
+      track.enabled = !mutedMic;
     }
-    setState(() => mutedMic = next);
+    notifyListeners();
   }
 
-  Future<void> _leave({bool pop = true}) async {
-    if (leaving) return;
-    leaving = true;
-    try {
-      widget.socket.emitWithAck(
-        'voice:leave',
-        {'teamId': widget.teamId},
-        ack: (_) {},
-      );
-      for (final pc in peers.values) {
-        await pc.close();
+  void toggleDeafen() {
+    deafened = !deafened;
+    for (final stream in _remoteStreams.values) {
+      for (final track in stream.getAudioTracks()) {
+        track.enabled = !deafened;
       }
-      peers.clear();
-      remoteStreams.clear();
-      final stream = localStream;
+    }
+    notifyListeners();
+  }
+
+  Future<void> _closePeers() async {
+    final list = _peers.values.toList();
+    _peers.clear();
+    _remoteStreams.clear();
+    for (final pc in list) {
+      await pc.close();
+    }
+  }
+
+  Future<void> leaveIfTeam(int id) async {
+    if (teamId == id) await leave();
+  }
+
+  Future<void> leave() async {
+    if (!active || leaving) return;
+    leaving = true;
+    final currentTeam = teamId;
+    try {
+      if (_socket?.connected == true && currentTeam != null) {
+        _socket?.emitWithAck('voice:leave', {'teamId': currentTeam}, ack: (_) {});
+      }
+      await _closePeers();
+      final stream = _localStream;
       if (stream != null) {
         for (final track in stream.getTracks()) {
           track.stop();
         }
         await stream.dispose();
       }
-      localStream = null;
     } catch (_) {}
-    if (pop && mounted) Navigator.of(context).pop();
-  }
 
-  @override
-  void dispose() {
-    widget.socket.off('voice:peer_joined', _onPeerJoined);
-    widget.socket.off('voice:peer_left', _onPeerLeft);
-    widget.socket.off('voice:offer', _onOffer);
-    widget.socket.off('voice:answer', _onAnswer);
-    widget.socket.off('voice:ice', _onIce);
-    if (!leaving) unawaited(_leave(pop: false));
-    super.dispose();
+    _socket?.dispose();
+    _socket = null;
+    _localStream = null;
+    teamId = null;
+    teamTitle = '';
+    connecting = false;
+    connected = false;
+    mutedMic = false;
+    deafened = false;
+    leaving = false;
+    status = '연결 안 됨';
+    notifyListeners();
   }
+}
+
+class PersistentVoiceOverlay extends StatelessWidget {
+  const PersistentVoiceOverlay({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-        padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.viewPaddingOf(context).bottom + 22),
-        decoration: const BoxDecoration(
-          color: panel,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border(top: BorderSide(color: line)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(width: 38, height: 4, decoration: BoxDecoration(color: line, borderRadius: BorderRadius.circular(8))),
-              const SizedBox(height: 20),
-              const Icon(Icons.graphic_eq_rounded, color: mint, size: 38),
-              const SizedBox(height: 10),
-              const Text('파티 음성 채팅', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 6),
-              Text(
-                loading ? '연결 준비 중…' : '$participantCount명 연결 · $status',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: status == '음성 채팅 연결됨' ? mint : muted, fontSize: 12, height: 1.45),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: loading || localStream == null ? null : _toggleMute,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: mutedMic ? panelSoft : mint,
-                        foregroundColor: mutedMic ? Colors.white : bg,
-                        minimumSize: const Size.fromHeight(52),
-                      ),
-                      icon: Icon(mutedMic ? Icons.mic_off_rounded : Icons.mic_rounded),
-                      label: Text(mutedMic ? '마이크 켜기' : '마이크 끄기'),
-                    ),
+    final voice = VoiceSession.instance;
+    return AnimatedBuilder(
+      animation: voice,
+      builder: (context, _) {
+        if (!voice.active || MediaQuery.viewInsetsOf(context).bottom > 0) {
+          return const SizedBox.shrink();
+        }
+        final connected = voice.connected;
+        return SafeArea(
+          minimum: const EdgeInsets.fromLTRB(12, 0, 12, 82),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  final navContext = pygaNavigatorKey.currentContext;
+                  if (navContext == null) return;
+                  showModalBottomSheet(
+                    context: navContext,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => const VoiceRoomSheet(),
+                  );
+                },
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF171A23),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: connected ? mint.withAlpha(150) : warning.withAlpha(130)),
+                    boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 20, offset: Offset(0, 8))],
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _leave(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: danger,
-                        side: const BorderSide(color: danger),
-                        minimumSize: const Size.fromHeight(52),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: connected ? mint : warning,
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                      icon: const Icon(Icons.call_end_rounded),
-                      label: const Text('나가기'),
-                    ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              voice.teamTitle.isEmpty ? '파티 음성 채팅' : voice.teamTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${voice.status} · ${voice.participantCount}명',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: connected ? mint : warning, fontSize: 10.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: voice.toggleMute,
+                        icon: Icon(voice.mutedMic ? Icons.mic_off_rounded : Icons.mic_rounded, color: voice.mutedMic ? danger : mint),
+                      ),
+                      IconButton(
+                        onPressed: voice.toggleDeafen,
+                        icon: Icon(voice.deafened ? Icons.headset_off_rounded : Icons.headphones_rounded, color: voice.deafened ? danger : Colors.white),
+                      ),
+                      IconButton(
+                        onPressed: () => unawaited(voice.leave()),
+                        icon: const Icon(Icons.call_end_rounded, color: danger),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                '베타 음성 기능 · 네트워크 환경에 따라 연결 품질이 달라질 수 있습니다.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: muted, fontSize: 10),
-              ),
-            ],
+            ),
           ),
-        ),
-      );
+        );
+      },
+    );
+  }
+}
+
+class VoiceRoomSheet extends StatelessWidget {
+  const VoiceRoomSheet({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final voice = VoiceSession.instance;
+    return AnimatedBuilder(
+      animation: voice,
+      builder: (context, _) {
+        final connected = voice.connected;
+        return Container(
+          padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.viewPaddingOf(context).bottom + 22),
+          decoration: const BoxDecoration(
+            color: panel,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border(top: BorderSide(color: line)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 38, height: 4, decoration: BoxDecoration(color: line, borderRadius: BorderRadius.circular(8))),
+                const SizedBox(height: 18),
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: (connected ? mint : warning).withAlpha(24),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: (connected ? mint : warning).withAlpha(130)),
+                  ),
+                  child: Icon(connected ? Icons.graphic_eq_rounded : Icons.sync_rounded, color: connected ? mint : warning, size: 34),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  voice.teamTitle.isEmpty ? '파티 음성 채팅' : voice.teamTitle,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 7),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(color: connected ? mint : warning, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 7),
+                    Flexible(
+                      child: Text(
+                        '${voice.status} · ${voice.participantCount}명 연결',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: connected ? mint : warning, fontSize: 12, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: voice.active ? voice.toggleMute : null,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: voice.mutedMic ? panelSoft : mint,
+                          foregroundColor: voice.mutedMic ? Colors.white : bg,
+                          minimumSize: const Size.fromHeight(54),
+                        ),
+                        icon: Icon(voice.mutedMic ? Icons.mic_off_rounded : Icons.mic_rounded),
+                        label: Text(voice.mutedMic ? '마이크 꺼짐' : '마이크 켜짐'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: voice.active ? voice.toggleDeafen : null,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: voice.deafened ? panelSoft : const Color(0xFF292D3A),
+                          foregroundColor: voice.deafened ? danger : Colors.white,
+                          minimumSize: const Size.fromHeight(54),
+                        ),
+                        icon: Icon(voice.deafened ? Icons.headset_off_rounded : Icons.headphones_rounded),
+                        label: Text(voice.deafened ? '듣기 꺼짐' : '듣기 켜짐'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: voice.active
+                      ? () async {
+                          await voice.leave();
+                          if (context.mounted) Navigator.of(context).pop();
+                        }
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: danger,
+                    side: const BorderSide(color: danger),
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                  icon: const Icon(Icons.call_end_rounded),
+                  label: const Text('음성 채팅 나가기'),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '화면을 이동해도 통화는 유지됩니다. 아래 고정 음성 바에서 마이크·헤드셋·종료 상태를 바로 확인할 수 있습니다.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: muted, fontSize: 10.5, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
