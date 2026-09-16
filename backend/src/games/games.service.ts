@@ -57,6 +57,15 @@ export class GamesService {
     return best;
   }
 
+  private async bySlug(slug: string, apiKey: string): Promise<RawgGame | null> {
+    const url = new URL(`https://api.rawg.io/api/games/${encodeURIComponent(slug)}`);
+    url.searchParams.set("key", apiKey);
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return null;
+    return (await response.json()) as RawgGame;
+  }
+
   private async search(query: string, apiKey: string, exact: boolean): Promise<RawgGame[]> {
     const url = new URL("https://api.rawg.io/api/games");
     url.searchParams.set("key", apiKey);
@@ -87,11 +96,20 @@ export class GamesService {
     try {
       let selected: RawgGame | null = null;
 
-      // 1) 대표 이름들을 exact 검색합니다.
-      for (const query of entry.queries) {
-        const exactCandidates = await this.search(query, apiKey, true);
-        selected = this.pick(entry, exactCandidates);
-        if (selected) break;
+      // 검색 결과가 자주 누락되는 게임은 RAWG의 정확한 slug로 먼저 조회합니다.
+      // 이미지를 앱에 저장하는 것이 아니라 RAWG API의 해당 게임 데이터를 직접 사용합니다.
+      if (entry.slug) {
+        const slugGame = await this.bySlug(entry.slug, apiKey);
+        if (slugGame && this.imageOf(slugGame)) selected = slugGame;
+      }
+
+      // 1) slug 조회가 없거나 실패하면 대표 이름들을 exact 검색합니다.
+      if (!selected) {
+        for (const query of entry.queries) {
+          const exactCandidates = await this.search(query, apiKey, true);
+          selected = this.pick(entry, exactCandidates);
+          if (selected) break;
+        }
       }
 
       // 2) exact 결과가 있었더라도 적절한 게임/이미지를 못 찾았으면 일반 검색을 다시 합니다.
