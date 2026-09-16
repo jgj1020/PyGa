@@ -8,8 +8,8 @@ class Api {
     defaultValue: '',
   );
 
-  // 웹 개발 환경에서 localhost가 IPv4/IPv6로 다르게 해석되어도
-  // 로그인/페이지 이동이 막히지 않도록 실제 연결에 성공한 주소를 기억합니다.
+  static final http.Client _client = http.Client();
+
   static String _activeBase = _configuredBase.isNotEmpty
       ? _normalizeBase(_configuredBase)
       : 'http://127.0.0.1:3000';
@@ -30,9 +30,6 @@ class Api {
     if (_configuredBase.trim().isNotEmpty) {
       final configured = _normalizeBase(_configuredBase);
       final uri = Uri.tryParse(configured);
-
-      // 예전에 안내한 --dart-define=...localhost:3000 으로 실행해도
-      // localhost/127.0.0.1 중 실제로 열려 있는 쪽을 자동 재시도합니다.
       if (uri != null && (uri.host == 'localhost' || uri.host == '127.0.0.1')) {
         final alternateHost = uri.host == 'localhost' ? '127.0.0.1' : 'localhost';
         final alternate = uri.replace(host: alternateHost).toString();
@@ -57,9 +54,8 @@ class Api {
     if (token != null) req.headers['Authorization'] = 'Bearer $token';
     if (body != null) req.body = jsonEncode(body);
 
-    final response = await http.Response.fromStream(
-      await req.send(),
-    ).timeout(const Duration(seconds: 7));
+    final streamed = await _client.send(req).timeout(const Duration(seconds: 65));
+    final response = await http.Response.fromStream(streamed);
 
     dynamic data = <String, dynamic>{};
     if (response.body.isNotEmpty) {
@@ -99,19 +95,41 @@ class Api {
       } on http.ClientException catch (e) {
         lastConnectionError = e;
       } on Exception {
-        // 서버가 응답한 400/401/403 등의 실제 오류는 다른 주소로 재시도하지 않습니다.
         rethrow;
       }
     }
 
     if (lastConnectionError != null) {
-      throw Exception(
-        '백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요. '
-        '(기본 주소: http://127.0.0.1:3000)',
-      );
+      throw Exception('백엔드 서버에 연결할 수 없습니다. 서버가 깨어나는 중이면 잠시 후 다시 시도해주세요.');
     }
-
     throw Exception('서버 요청에 실패했습니다.');
+  }
+
+  /// Render 무료 서버가 잠들어 있을 때 사용자가 입력하는 동안 미리 깨웁니다.
+  static Future<void> warmup() async {
+    for (final candidate in _baseCandidates) {
+      try {
+        final response = await _client
+            .get(Uri.parse('$candidate/'))
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode < 500) {
+          _activeBase = candidate;
+          return;
+        }
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> register(String nickname, String email, String password) async {
+    token = null;
+    user = {};
+    final result = await request('POST', '/auth/register', {
+      'nickname': nickname.trim(),
+      'email': email.trim(),
+      'password': password,
+    });
+    token = result['accessToken'] as String;
+    user = Map<String, dynamic>.from(result['user'] as Map);
   }
 
   static Future<void> login(String email, String password) async {
@@ -122,12 +140,7 @@ class Api {
       'password': password,
     });
     token = result['accessToken'] as String;
-    try {
-      user = Map<String, dynamic>.from(await request('GET', '/community/me'));
-    } catch (_) {
-      token = null;
-      rethrow;
-    }
+    user = Map<String, dynamic>.from(result['user'] as Map);
   }
 
   static Future<void> adminLogin(String email, String password) async {

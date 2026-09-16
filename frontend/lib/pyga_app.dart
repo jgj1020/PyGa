@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:uuid/uuid.dart';
@@ -21,6 +22,38 @@ const danger = Color(0xFFFF667A);
 const warning = Color(0xFFFFC765);
 
 const games = ['League of Legends', 'VALORANT', '배틀그라운드', 'FC Online'];
+const pcGames = <String>[
+  'League of Legends',
+  'VALORANT',
+  '배틀그라운드',
+  'FC Online',
+  '오버워치 2',
+  '메이플스토리',
+  '로스트아크',
+  '서든어택',
+  '던전앤파이터',
+  '마인크래프트',
+  'TFT',
+  '스타크래프트 2',
+  '이터널 리턴',
+  '레인보우 식스 시즈',
+  '카운터 스트라이크 2',
+];
+const mobileGames = <String>[
+  '브롤스타즈',
+  '배틀그라운드 모바일',
+  '리그 오브 레전드: 와일드 리프트',
+  'TFT 모바일',
+  '원신',
+  '붕괴: 스타레일',
+  '로블록스',
+  '쿠키런: 킹덤',
+  '클래시 로얄',
+  '포켓몬 GO',
+  '카트라이더 러쉬플러스',
+  '모바일 레전드',
+];
+const allGames = <String>[...pcGames, ...mobileGames];
 const modes = ['경쟁전', '일반전', '칼바람 나락', '자유 플레이'];
 
 const gameArtwork = <String, String>{
@@ -29,6 +62,57 @@ const gameArtwork = <String, String>{
   '배틀그라운드': 'assets/games/pubg.jpg',
   'FC Online': 'assets/games/fc_online.jpg',
 };
+
+String gamePlatform(String game) => mobileGames.contains(game) ? '모바일' : 'PC';
+
+List<String> gameModes(String game) {
+  switch (game) {
+    case 'League of Legends':
+      return const ['솔로랭크', '자유랭크', '일반전', '칼바람 나락'];
+    case 'VALORANT':
+      return const ['경쟁전', '일반전', '신속플레이', '데스매치'];
+    case '배틀그라운드':
+    case '배틀그라운드 모바일':
+      return const ['솔로', '듀오', '스쿼드', '일반전'];
+    case 'FC Online':
+      return const ['1vs1', '2vs2', '친선', '클럽'];
+    case '오버워치 2':
+      return const ['경쟁전', '빠른 대전', '아케이드', '사용자 지정'];
+    case '메이플스토리':
+    case '로스트아크':
+    case '던전앤파이터':
+      return const ['보스/레이드', '사냥', '퀘스트', '자유 플레이'];
+    case '브롤스타즈':
+      return const ['트로피', '경쟁전', '이벤트', '자유 플레이'];
+    case 'TFT':
+    case 'TFT 모바일':
+      return const ['랭크', '일반', '더블 업', '자유 플레이'];
+    default:
+      return const ['랭크/경쟁', '일반', '협동', '자유 플레이'];
+  }
+}
+
+String tierHint(String game) {
+  switch (game) {
+    case 'League of Legends':
+    case 'TFT':
+    case 'TFT 모바일':
+      return '예) Gold 2 / Emerald 4 / Master';
+    case 'VALORANT':
+      return '예) Gold 3 / Diamond 1 / Immortal';
+    case '오버워치 2':
+      return '예) Platinum 2 / Master 5';
+    case '배틀그라운드':
+    case '배틀그라운드 모바일':
+      return '예) Gold / Diamond / Master';
+    case '브롤스타즈':
+      return '예) Diamond / Mythic / Masters';
+    case 'FC Online':
+      return '예) 월드클래스 / 챌린저 / 슈퍼챔피언스';
+    default:
+      return '티어/랭크가 없다면 비워도 됩니다.';
+  }
+}
 
 String gameDisplayName(String game) {
   switch (game) {
@@ -530,6 +614,12 @@ class _AuthPageState extends State<AuthPage> {
   bool obscure = true;
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(Api.warmup());
+  }
+
+  @override
   void dispose() {
     email.dispose();
     password.dispose();
@@ -543,18 +633,13 @@ class _AuthPageState extends State<AuthPage> {
     setState(() => busy = true);
     try {
       if (register) {
-        await Api.request('POST', '/auth/register', {
-          'nickname': nickname.text.trim(),
-          'email': email.text.trim(),
-          'password': password.text,
-        });
+        await Api.register(nickname.text, email.text, password.text);
         if (!mounted) return;
-        successNotice(context, '회원가입 완료', '이제 로그인해서 PyGa를 시작할 수 있어요.');
-        setState(() {
-          register = false;
-          password.clear();
-          confirm.clear();
-        });
+        successNotice(context, '회원가입 완료', '계정이 만들어졌어요. 바로 PyGa를 시작합니다!');
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainPage()),
+          (_) => false,
+        );
       } else {
         await Api.login(email.text, password.text);
         if (!mounted) return;
@@ -875,10 +960,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     socket.on('admin:message_new', (_) => load(silent: true));
     socket.connect();
     load();
-    refreshTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => load(silent: true),
-    );
+    refreshTimer = Timer.periodic(const Duration(seconds: 6), (_) => load(silent: true));
   }
 
   @override
@@ -901,24 +983,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         if (response is Map && response['ok'] == true) {
           completer.complete(response['data']);
         } else {
-          completer.completeError(
-            Exception(response is Map ? response['error'] ?? '요청 실패' : '응답 오류'),
-          );
+          completer.completeError(Exception(response is Map ? response['error'] ?? '요청 실패' : '응답 오류'));
         }
       },
     );
-    return completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => throw Exception('관리자 서버 응답이 늦습니다.'),
-    );
+    return completer.future.timeout(const Duration(seconds: 8), onTimeout: () => throw Exception('관리자 서버 응답이 늦습니다.'));
   }
 
   Future<void> load({bool silent = false}) async {
     if (!silent && mounted) setState(() => loading = true);
     try {
-      final result = Map<String, dynamic>.from(
-        await Api.request('GET', '/admin/dashboard'),
-      );
+      final result = Map<String, dynamic>.from(await Api.request('GET', '/admin/dashboard'));
       if (mounted) {
         setState(() {
           data = result;
@@ -937,10 +1012,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   }
 
   List<Map<String, dynamic>> rows(String key) =>
-      (data?[key] as List?)
-          ?.map((e) => Map<String, dynamic>.from(e as Map))
-          .toList() ??
-      [];
+      (data?[key] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
 
   Future<void> deleteMessage(Map<String, dynamic> message) async {
     final ok = await askConfirm(
@@ -999,12 +1071,178 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  Future<void> createAnnouncement() async {
+    final title = TextEditingController();
+    final message = TextEditingController();
+    String kind = 'notice';
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          backgroundColor: panelSoft,
+          title: const Text('전체 공지 보내기'),
+          content: SizedBox(
+            width: 500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: kind,
+                  decoration: const InputDecoration(labelText: '공지 종류'),
+                  items: const [
+                    DropdownMenuItem(value: 'notice', child: Text('일반 공지')),
+                    DropdownMenuItem(value: 'maintenance_soon', child: Text('점검 예정')),
+                    DropdownMenuItem(value: 'maintenance', child: Text('점검 중')),
+                    DropdownMenuItem(value: 'maintenance_done', child: Text('점검 종료')),
+                  ],
+                  onChanged: (v) => setLocal(() => kind = v ?? 'notice'),
+                ),
+                const SizedBox(height: 12),
+                TextField(controller: title, maxLength: 80, decoration: const InputDecoration(labelText: '제목', counterText: '')),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: message,
+                  minLines: 3,
+                  maxLines: 6,
+                  maxLength: 1000,
+                  decoration: const InputDecoration(labelText: '내용', hintText: '예) 서버 안정화 작업으로 22:00부터 점검을 시작합니다.', counterText: ''),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+            FilledButton(
+              onPressed: () {
+                if (title.text.trim().length < 2 || message.text.trim().length < 2) return;
+                Navigator.pop(context, {'kind': kind, 'title': title.text.trim(), 'message': message.text.trim()});
+              },
+              child: const Text('전체 전송'),
+            ),
+          ],
+        ),
+      ),
+    );
+    title.dispose();
+    message.dispose();
+    if (result == null) return;
+    try {
+      await Api.request('POST', '/admin/announcements', result);
+      if (!mounted) return;
+      successNotice(context, '공지 전송 완료', '접속 중인 사용자에게 운영 알림이 표시됩니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<void> closeAnnouncement(Map<String, dynamic> item) async {
+    try {
+      await Api.request('PATCH', '/admin/announcements/${item['id']}/close');
+      if (!mounted) return;
+      successNotice(context, '공지 종료', '해당 공지를 더 이상 사용자에게 표시하지 않습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<Map<String, String>?> suspensionDialog({String titleText = '이용 정지 설정', bool allowNone = true}) async {
+    String duration = allowNone ? 'none' : '1d';
+    final note = TextEditingController();
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          backgroundColor: panelSoft,
+          title: Text(titleText),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: duration,
+                  decoration: const InputDecoration(labelText: '처분'),
+                  items: [
+                    if (allowNone) const DropdownMenuItem(value: 'none', child: Text('신고 처리만 완료 · 정지 없음')),
+                    const DropdownMenuItem(value: '1m', child: Text('1분 정지 (테스트용)')),
+                    const DropdownMenuItem(value: '1d', child: Text('1일 정지')),
+                    const DropdownMenuItem(value: '7d', child: Text('7일 정지')),
+                    const DropdownMenuItem(value: '30d', child: Text('30일 정지')),
+                    const DropdownMenuItem(value: '365d', child: Text('1년 정지')),
+                    const DropdownMenuItem(value: 'permanent', child: Text('영구 정지')),
+                  ],
+                  onChanged: (v) => setLocal(() => duration = v ?? duration),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: note,
+                  minLines: 2,
+                  maxLines: 4,
+                  maxLength: 500,
+                  decoration: const InputDecoration(labelText: '관리자 메모 / 정지 사유', counterText: ''),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, {'duration': duration, 'adminNote': note.text.trim()}),
+              child: const Text('처리'),
+            ),
+          ],
+        ),
+      ),
+    );
+    note.dispose();
+    return result;
+  }
+
+  Future<void> resolveReport(Map<String, dynamic> report) async {
+    final result = await suspensionDialog(titleText: '${report['reportedName']} 신고 처리');
+    if (result == null) return;
+    try {
+      await Api.request('PATCH', '/admin/reports/${report['id']}/resolve', result);
+      if (!mounted) return;
+      successNotice(context, '신고 처리 완료', result['duration'] == 'none' ? '신고를 처리 완료로 변경했습니다.' : '신고 처리와 이용 정지를 적용했습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<void> suspendUser(Map<String, dynamic> user) async {
+    final result = await suspensionDialog(titleText: '${user['nickname']} 이용 정지', allowNone: false);
+    if (result == null) return;
+    try {
+      await Api.request('POST', '/admin/users/${user['id']}/suspend', {
+        'duration': result['duration'],
+        'reason': result['adminNote']!.isEmpty ? '운영 정책 위반' : result['adminNote'],
+      });
+      if (!mounted) return;
+      successNotice(context, '정지 적용 완료', '${user['nickname']} 계정에 이용 정지를 적용했습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<void> unsuspendUser(Map<String, dynamic> user) async {
+    try {
+      await Api.request('POST', '/admin/users/${user['id']}/unsuspend');
+      if (!mounted) return;
+      successNotice(context, '정지 해제 완료', '${user['nickname']} 계정의 이용 정지를 해제했습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
   void logout() {
     Api.logout();
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const AuthPage()),
-      (_) => false,
-    );
+    Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const AuthPage()), (_) => false);
   }
 
   @override
@@ -1012,7 +1250,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final users = rows('users');
     final teams = rows('teams');
     final messages = rows('messages');
-    final sectionTitles = ['실시간 현황', '채팅 검열', '파티 관리', '회원 관리'];
+    final reports = rows('reports');
+    final announcements = rows('announcements');
+    final sectionTitles = ['실시간 현황', '채팅 검열', '파티 관리', '회원 관리', '신고 관리', '공지/점검'];
+    final icons = [
+      Icons.dashboard_rounded,
+      Icons.shield_rounded,
+      Icons.groups_2_rounded,
+      Icons.people_alt_rounded,
+      Icons.flag_rounded,
+      Icons.campaign_rounded,
+    ];
+
+    Widget content;
+    switch (section) {
+      case 1:
+        content = _adminMessages(messages);
+        break;
+      case 2:
+        content = _adminTeams(teams);
+        break;
+      case 3:
+        content = _adminUsers(users);
+        break;
+      case 4:
+        content = _adminReports(reports);
+        break;
+      case 5:
+        content = _adminAnnouncements(announcements);
+        break;
+      default:
+        content = _adminOverview(users, teams, messages, reports);
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -1026,20 +1295,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               borderRadius: BorderRadius.circular(99),
               border: Border.all(color: (live ? mint : danger).withAlpha(75)),
             ),
-            child: Row(
-              children: [
-                Icon(Icons.circle, size: 8, color: live ? mint : danger),
-                const SizedBox(width: 6),
-                Text(
-                  live ? 'LIVE' : '연결 중',
-                  style: TextStyle(
-                    color: live ? mint : danger,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
+            child: Row(children: [
+              Icon(Icons.circle, size: 8, color: live ? mint : danger),
+              const SizedBox(width: 6),
+              Text(live ? 'LIVE' : '연결 중', style: TextStyle(color: live ? mint : danger, fontSize: 10, fontWeight: FontWeight.w900)),
+            ]),
           ),
           IconButton(onPressed: () => load(), icon: const Icon(Icons.refresh_rounded)),
           IconButton(onPressed: logout, icon: const Icon(Icons.logout_rounded)),
@@ -1057,28 +1317,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   padding: const EdgeInsets.fromLTRB(18, 10, 18, 40),
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
-                    _Entrance(
-                      child: GlowCard(
-                        borderColor: purple.withAlpha(85),
-                        child: Row(
-                          children: [
-                            const BrandMark(size: 52, showName: false),
-                            const SizedBox(width: 14),
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('운영 관제 센터', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                                  SizedBox(height: 4),
-                                  Text('회원 · 파티 · 채팅을 실시간으로 확인하고 관리합니다.', style: TextStyle(color: muted, height: 1.4)),
-                                ],
-                              ),
-                            ),
-                            if (live)
-                              const _MiniBadge(text: '실시간 감시 ON', color: mint),
-                          ],
-                        ),
-                      ),
+                    GlowCard(
+                      borderColor: purple.withAlpha(85),
+                      child: const Row(children: [
+                        BrandMark(size: 52, showName: false),
+                        SizedBox(width: 14),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text('운영 관제 센터', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                          SizedBox(height: 4),
+                          Text('공지 · 신고 · 회원 정지 · 파티 · 채팅을 한 곳에서 관리합니다.', style: TextStyle(color: muted, height: 1.4)),
+                        ])),
+                      ]),
                     ),
                     const SizedBox(height: 14),
                     SingleChildScrollView(
@@ -1086,7 +1335,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       child: Row(
                         children: List.generate(sectionTitles.length, (index) {
                           final selected = section == index;
-                          final icons = [Icons.dashboard_rounded, Icons.shield_rounded, Icons.groups_2_rounded, Icons.people_alt_rounded];
                           return Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: ChoiceChip(
@@ -1096,49 +1344,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               onSelected: (_) => setState(() => section = index),
                               selectedColor: mint,
                               backgroundColor: panel,
-                              labelStyle: TextStyle(
-                                color: selected ? bg : Colors.white,
-                                fontWeight: FontWeight.w800,
-                              ),
+                              labelStyle: TextStyle(color: selected ? bg : Colors.white, fontWeight: FontWeight.w800),
                               side: BorderSide(color: selected ? mint : line),
                             ),
                           );
                         }),
                       ),
                     ),
-                    if (loading) ...[
-                      const SizedBox(height: 12),
-                      const LinearProgressIndicator(color: mint),
-                    ],
+                    if (loading) ...[const SizedBox(height: 12), const LinearProgressIndicator(color: mint)],
                     if (error != null) ...[
                       const SizedBox(height: 12),
-                      GlowCard(
-                        borderColor: danger.withAlpha(90),
-                        child: Text(error!, style: const TextStyle(color: danger)),
-                      ),
+                      GlowCard(borderColor: danger.withAlpha(90), child: Text(error!, style: const TextStyle(color: danger))),
                     ],
                     const SizedBox(height: 18),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      switchInCurve: Curves.easeOutCubic,
-                      transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: animation,
-                        child: SlideTransition(
-                          position: Tween(begin: const Offset(.03, .03), end: Offset.zero).animate(animation),
-                          child: child,
-                        ),
-                      ),
-                      child: KeyedSubtree(
-                        key: ValueKey(section),
-                        child: section == 0
-                            ? _adminOverview(users, teams, messages)
-                            : section == 1
-                                ? _adminMessages(messages)
-                                : section == 2
-                                    ? _adminTeams(teams)
-                                    : _adminUsers(users),
-                      ),
-                    ),
+                    AnimatedSwitcher(duration: const Duration(milliseconds: 250), child: KeyedSubtree(key: ValueKey(section), child: content)),
                   ],
                 ),
               ),
@@ -1153,104 +1372,94 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     List<Map<String, dynamic>> users,
     List<Map<String, dynamic>> teams,
     List<Map<String, dynamic>> messages,
+    List<Map<String, dynamic>> reports,
   ) {
-    final latestMessages = messages.take(6).toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final columns = constraints.maxWidth >= 760 ? 4 : 2;
-            return GridView.count(
-              crossAxisCount: columns,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: columns == 4 ? 1.25 : 1.35,
-              children: [
-                _StatCard(icon: Icons.people_alt_rounded, label: '전체 회원', value: '${data?['userCount'] ?? 0}', color: mint),
-                _StatCard(icon: Icons.groups_2_rounded, label: '운영 파티', value: '${data?['teamCount'] ?? 0}', color: purpleSoft),
-                _StatCard(icon: Icons.forum_rounded, label: '전체 메시지', value: '${data?['messageCount'] ?? 0}', color: warning),
-                _StatCard(icon: Icons.link_rounded, label: '파티 참여', value: '${data?['membershipCount'] ?? 0}', color: const Color(0xFF73A7FF)),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 22),
-        Row(
+    final pendingReports = reports.where((r) => r['status'] == 'pending').length;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      LayoutBuilder(builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 760 ? 4 : 2;
+        return GridView.count(
+          crossAxisCount: columns,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: columns == 4 ? 1.25 : 1.35,
           children: [
-            const Expanded(child: Text('실시간 채팅 피드', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
-            Text('${messages.length}개 표시', style: const TextStyle(color: muted, fontSize: 11)),
+            _StatCard(icon: Icons.people_alt_rounded, label: '전체 회원', value: '${data?['userCount'] ?? users.length}', color: mint),
+            _StatCard(icon: Icons.groups_2_rounded, label: '운영 파티', value: '${data?['teamCount'] ?? teams.length}', color: purpleSoft),
+            _StatCard(icon: Icons.forum_rounded, label: '전체 메시지', value: '${data?['messageCount'] ?? 0}', color: warning),
+            _StatCard(icon: Icons.flag_rounded, label: '미처리 신고', value: '$pendingReports', color: danger),
           ],
-        ),
-        const SizedBox(height: 10),
-        if (latestMessages.isEmpty)
-          const GlowCard(child: Text('아직 올라온 채팅이 없습니다.', style: TextStyle(color: muted)))
-        else
-          ...latestMessages.map((m) => _AdminMessageCard(message: m, onDelete: () => deleteMessage(m))),
-        const SizedBox(height: 22),
-        Row(
-          children: [
-            const Expanded(child: Text('최근 생성 파티', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
-            Text('${teams.length}개 운영 중', style: const TextStyle(color: muted, fontSize: 11)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ...teams.take(4).map((t) => _AdminTeamCard(team: t, onDelete: () => deleteTeam(t))),
-      ],
-    );
+        );
+      }),
+      const SizedBox(height: 22),
+      const Text('최근 채팅', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+      const SizedBox(height: 10),
+      ...messages.take(5).map((m) => _AdminMessageCard(message: m, onDelete: () => deleteMessage(m))),
+    ]);
   }
 
-  Widget _adminMessages(List<Map<String, dynamic>> messages) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const GlowCard(
-          borderColor: Color(0x55FFC765),
-          child: Row(
-            children: [
-              Icon(Icons.shield_rounded, color: warning),
-              SizedBox(width: 12),
-              Expanded(child: Text('새 채팅이 올라오면 자동 갱신됩니다. 문제가 있는 메시지는 즉시 삭제할 수 있습니다.', style: TextStyle(color: muted, height: 1.45))),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        if (messages.isEmpty)
-          const GlowCard(child: Text('표시할 채팅이 없습니다.', style: TextStyle(color: muted)))
-        else
-          ...messages.map((m) => _AdminMessageCard(message: m, onDelete: () => deleteMessage(m))),
+  Widget _adminMessages(List<Map<String, dynamic>> messages) => Column(
+        children: messages.isEmpty
+            ? [const GlowCard(child: Text('표시할 채팅이 없습니다.', style: TextStyle(color: muted)))]
+            : messages.map((m) => _AdminMessageCard(message: m, onDelete: () => deleteMessage(m))).toList(),
+      );
+
+  Widget _adminTeams(List<Map<String, dynamic>> teams) => Column(
+        children: teams.isEmpty
+            ? [const GlowCard(child: Text('현재 운영 중인 파티가 없습니다.', style: TextStyle(color: muted)))]
+            : teams.map((t) => _AdminTeamCard(team: t, onDelete: () => deleteTeam(t))).toList(),
+      );
+
+  Widget _adminUsers(List<Map<String, dynamic>> users) => Column(
+        children: users.isEmpty
+            ? [const GlowCard(child: Text('회원이 없습니다.', style: TextStyle(color: muted)))]
+            : users
+                .map((u) => _AdminUserCard(
+                      user: u,
+                      onDelete: u['isAdmin'] == true ? null : () => deleteUser(u),
+                      onSuspend: u['isAdmin'] == true ? null : () => suspendUser(u),
+                      onUnsuspend: u['isAdmin'] == true ? null : () => unsuspendUser(u),
+                    ))
+                .toList(),
+      );
+
+  Widget _adminReports(List<Map<String, dynamic>> reports) {
+    final pending = reports.where((r) => r['status'] == 'pending').toList();
+    final done = reports.where((r) => r['status'] != 'pending').toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      GlowCard(
+        borderColor: danger.withAlpha(70),
+        child: Row(children: [
+          const Icon(Icons.flag_rounded, color: danger),
+          const SizedBox(width: 10),
+          Expanded(child: Text('미처리 신고 ${pending.length}건 · 신고 내용을 확인한 뒤 정지 기간을 선택할 수 있습니다.', style: const TextStyle(color: muted))),
+        ]),
+      ),
+      const SizedBox(height: 12),
+      if (pending.isEmpty) const GlowCard(child: Text('미처리 신고가 없습니다.', style: TextStyle(color: muted))),
+      ...pending.map((r) => _AdminReportCard(report: r, onResolve: () => resolveReport(r))),
+      if (done.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        const Text('처리 완료', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 8),
+        ...done.take(50).map((r) => _AdminReportCard(report: r)),
       ],
-    );
+    ]);
   }
 
-  Widget _adminTeams(List<Map<String, dynamic>> teams) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (teams.isEmpty)
-          const GlowCard(child: Text('현재 운영 중인 파티가 없습니다.', style: TextStyle(color: muted)))
-        else
-          ...teams.map((t) => _AdminTeamCard(team: t, onDelete: () => deleteTeam(t))),
-      ],
-    );
-  }
-
-  Widget _adminUsers(List<Map<String, dynamic>> users) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (users.isEmpty)
-          const GlowCard(child: Text('회원이 없습니다.', style: TextStyle(color: muted)))
-        else
-          ...users.map((u) => _AdminUserCard(
-                user: u,
-                onDelete: u['isAdmin'] == true ? null : () => deleteUser(u),
-              )),
-      ],
-    );
-  }
+  Widget _adminAnnouncements(List<Map<String, dynamic>> items) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilledButton.icon(onPressed: createAnnouncement, icon: const Icon(Icons.campaign_rounded), label: const Text('전체 공지 / 점검 알림 보내기')),
+          const SizedBox(height: 14),
+          if (items.isEmpty)
+            const GlowCard(child: Text('공지 기록이 없습니다.', style: TextStyle(color: muted)))
+          else
+            ...items.map((a) => _AdminAnnouncementCard(item: a, onClose: a['active'] == true ? () => closeAnnouncement(a) : null)),
+        ],
+      );
 }
 
 class _AdminMessageCard extends StatelessWidget {
@@ -1260,52 +1469,26 @@ class _AdminMessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final created = DateTime.tryParse('${message['createdAt']}')?.toLocal();
-    final time = created == null
-        ? ''
-        : '${created.hour.toString().padLeft(2, '0')}:${created.minute.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlowCard(
         padding: const EdgeInsets.all(14),
-        borderColor: purple.withAlpha(45),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(color: purple.withAlpha(25), borderRadius: BorderRadius.circular(13)),
-              child: const Icon(Icons.chat_bubble_rounded, color: purpleSoft, size: 19),
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 5,
-                    children: [
-                      Text('${message['nickname']}', style: const TextStyle(fontWeight: FontWeight.w900)),
-                      _MiniBadge(text: '${message['game']}', color: purpleSoft),
-                      _MiniBadge(text: '#${message['teamId']} ${message['teamTitle']}', color: mint),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText('${message['body']}', style: const TextStyle(height: 1.45)),
-                  const SizedBox(height: 6),
-                  Text('${message['email']} · $time', style: const TextStyle(color: muted, fontSize: 10)),
-                ],
-              ),
-            ),
-            IconButton(
-              tooltip: '메시지 삭제',
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline_rounded, color: danger),
-            ),
-          ],
-        ),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Icon(Icons.chat_bubble_rounded, color: purpleSoft),
+          const SizedBox(width: 11),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 6, children: [
+              Text('${message['nickname']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+              _MiniBadge(text: '${message['game']}', color: purpleSoft),
+              _MiniBadge(text: '#${message['teamId']} ${message['teamTitle']}', color: mint),
+            ]),
+            const SizedBox(height: 8),
+            SelectableText('${message['body']}', style: const TextStyle(height: 1.45)),
+            const SizedBox(height: 5),
+            Text('${message['email']}', style: const TextStyle(color: muted, fontSize: 10)),
+          ])),
+          IconButton(onPressed: onDelete, tooltip: '메시지 삭제', icon: const Icon(Icons.delete_outline_rounded, color: danger)),
+        ]),
       ),
     );
   }
@@ -1318,52 +1501,26 @@ class _AdminTeamCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final private = team['isPrivate'] == true;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlowCard(
         padding: const EdgeInsets.all(15),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [purple.withAlpha(70), mint.withAlpha(25)]),
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Icon(private ? Icons.lock_rounded : Icons.public_rounded, color: private ? warning : mint),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${team['title']}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 5),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 5,
-                    children: [
-                      _MiniBadge(text: '${team['game']}', color: purpleSoft),
-                      _MiniBadge(text: '${team['mode']}', color: mint),
-                      _MiniBadge(text: '${team['memberCount']}/${team['capacity']}명', color: warning),
-                      _MiniBadge(text: '채팅 ${team['messageCount']}개', color: const Color(0xFF73A7FF)),
-                      if (private) _MiniBadge(text: '비공개 · ${team['accessCode']}', color: danger),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text('방장 ${team['ownerName']} · ${team['ownerEmail']}', style: const TextStyle(color: muted, fontSize: 11)),
-                ],
-              ),
-            ),
-            IconButton(
-              tooltip: '파티 강제 삭제',
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_forever_rounded, color: danger),
-            ),
-          ],
-        ),
+        child: Row(children: [
+          Icon(team['isPrivate'] == true ? Icons.lock_rounded : Icons.public_rounded, color: team['isPrivate'] == true ? warning : mint),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${team['title']}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 5),
+            Wrap(spacing: 6, runSpacing: 5, children: [
+              _MiniBadge(text: '${team['game']}', color: purpleSoft),
+              _MiniBadge(text: '${team['mode']}', color: mint),
+              _MiniBadge(text: '${team['memberCount']}/${team['capacity']}명', color: warning),
+            ]),
+            const SizedBox(height: 5),
+            Text('방장 ${team['ownerName']} · ${team['ownerEmail']}', style: const TextStyle(color: muted, fontSize: 11)),
+          ])),
+          IconButton(onPressed: onDelete, tooltip: '파티 강제 삭제', icon: const Icon(Icons.delete_forever_rounded, color: danger)),
+        ]),
       ),
     );
   }
@@ -1372,48 +1529,127 @@ class _AdminTeamCard extends StatelessWidget {
 class _AdminUserCard extends StatelessWidget {
   final Map<String, dynamic> user;
   final VoidCallback? onDelete;
-  const _AdminUserCard({required this.user, this.onDelete});
+  final VoidCallback? onSuspend;
+  final VoidCallback? onUnsuspend;
+  const _AdminUserCard({required this.user, this.onDelete, this.onSuspend, this.onUnsuspend});
+
+  bool get suspended {
+    if (user['suspensionPermanent'] == true) return true;
+    final until = DateTime.tryParse('${user['suspendedUntil'] ?? ''}');
+    return until != null && until.isAfter(DateTime.now());
+  }
 
   @override
   Widget build(BuildContext context) {
-    final created = DateTime.tryParse('${user['createdAt']}')?.toLocal();
-    final dateText = created == null
-        ? ''
-        : '${created.year}.${created.month.toString().padLeft(2, '0')}.${created.day.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GlowCard(
         padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Avatar(user['avatar'], radius: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(child: Text('${user['nickname']}', style: const TextStyle(fontWeight: FontWeight.w900))),
-                      if (user['isAdmin'] == true) ...[
-                        const SizedBox(width: 7),
-                        const _MiniBadge(text: 'ADMIN', color: mint),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text('${user['email']} · 가입 $dateText', style: const TextStyle(color: muted, fontSize: 11)),
-                ],
-              ),
+        borderColor: suspended ? danger.withAlpha(85) : null,
+        child: Row(children: [
+          Avatar(user['avatar'], radius: 20),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 7, runSpacing: 5, children: [
+              Text('${user['nickname']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+              if (user['isAdmin'] == true) const _MiniBadge(text: 'ADMIN', color: mint),
+              if (suspended) _MiniBadge(text: user['suspensionPermanent'] == true ? '영구 정지' : '이용 정지', color: danger),
+            ]),
+            const SizedBox(height: 4),
+            Text('${user['email']}', style: const TextStyle(color: muted, fontSize: 11)),
+            if (suspended && user['suspensionReason'] != null)
+              Text('사유: ${user['suspensionReason']}', style: const TextStyle(color: danger, fontSize: 10)),
+          ])),
+          if (onSuspend != null)
+            PopupMenuButton<String>(
+              color: panelSoft,
+              onSelected: (v) {
+                if (v == 'suspend') onSuspend?.call();
+                if (v == 'unsuspend') onUnsuspend?.call();
+                if (v == 'delete') onDelete?.call();
+              },
+              itemBuilder: (_) => [
+                if (!suspended) const PopupMenuItem(value: 'suspend', child: Text('이용 정지')),
+                if (suspended) const PopupMenuItem(value: 'unsuspend', child: Text('정지 해제')),
+                if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('회원 삭제', style: TextStyle(color: danger))),
+              ],
             ),
-            if (onDelete != null)
-              IconButton(
-                tooltip: '회원 삭제',
-                onPressed: onDelete,
-                icon: const Icon(Icons.person_remove_alt_1_rounded, color: danger),
-              ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _AdminReportCard extends StatelessWidget {
+  final Map<String, dynamic> report;
+  final VoidCallback? onResolve;
+  const _AdminReportCard({required this.report, this.onResolve});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = report['status'] == 'pending';
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: GlowCard(
+        borderColor: pending ? danger.withAlpha(75) : line,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(pending ? Icons.flag_rounded : Icons.task_alt_rounded, color: pending ? danger : mint),
+            const SizedBox(width: 9),
+            Expanded(child: Text('${report['reportedName']} 신고', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900))),
+            _MiniBadge(text: pending ? '처리 대기' : '처리 완료', color: pending ? danger : mint),
+          ]),
+          const SizedBox(height: 10),
+          Wrap(spacing: 7, runSpacing: 6, children: [
+            _MiniBadge(text: '${report['category']}', color: warning),
+            if (report['game'] != null) _MiniBadge(text: '${report['game']}', color: purpleSoft),
+            if (report['teamTitle'] != null) _MiniBadge(text: '${report['teamTitle']}', color: mint),
+          ]),
+          const SizedBox(height: 9),
+          SelectableText('${report['details']}', style: const TextStyle(height: 1.5)),
+          const SizedBox(height: 7),
+          Text('신고자 ${report['reporterName']} (${report['reporterEmail']})', style: const TextStyle(color: muted, fontSize: 11)),
+          Text('대상 ${report['reportedName']} (${report['reportedEmail']})', style: const TextStyle(color: muted, fontSize: 11)),
+          if (!pending && report['adminNote'] != null) ...[
+            const SizedBox(height: 7),
+            Text('관리자 메모: ${report['adminNote']}', style: const TextStyle(color: purpleSoft, fontSize: 11)),
           ],
-        ),
+          if (onResolve != null) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(onPressed: onResolve, icon: const Icon(Icons.gavel_rounded), label: const Text('신고 처리 · 정지 기간 선택')),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class _AdminAnnouncementCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final VoidCallback? onClose;
+  const _AdminAnnouncementCard({required this.item, this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = item['active'] == true;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GlowCard(
+        borderColor: active ? warning.withAlpha(65) : line,
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.campaign_rounded, color: active ? warning : muted),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 7, children: [
+              Text('${item['title']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+              _MiniBadge(text: '${item['kind']}', color: active ? warning : muted),
+              _MiniBadge(text: active ? '표시 중' : '종료', color: active ? mint : muted),
+            ]),
+            const SizedBox(height: 7),
+            Text('${item['message']}', style: const TextStyle(color: Color(0xFFD7DAE3), height: 1.45)),
+          ])),
+          if (onClose != null) TextButton(onPressed: onClose, child: const Text('종료')),
+        ]),
       ),
     );
   }
@@ -1454,6 +1690,129 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+class ActiveAnnouncementBanner extends StatefulWidget {
+  final bool compact;
+  const ActiveAnnouncementBanner({super.key, this.compact = false});
+
+  @override
+  State<ActiveAnnouncementBanner> createState() => _ActiveAnnouncementBannerState();
+}
+
+class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
+  List<Map<String, dynamic>> announcements = [];
+  Timer? timer;
+  io.Socket? announcementSocket;
+  int? dismissedId;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+    timer = Timer.periodic(const Duration(seconds: 15), (_) => load());
+    if (Api.token != null) {
+      announcementSocket = io.io(
+        Api.base,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .disableAutoConnect()
+            .enableForceNew()
+            .setAuth({'token': Api.token})
+            .build(),
+      );
+      announcementSocket!.on('announcement:update', (_) => load());
+      announcementSocket!.connect();
+    }
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    announcementSocket?.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    if (Api.token == null) return;
+    try {
+      final raw = await Api.request('GET', '/community/announcements');
+      if (!mounted) return;
+      setState(() {
+        announcements = (raw as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      });
+    } catch (_) {}
+  }
+
+  Color colorFor(String kind) {
+    switch (kind) {
+      case 'maintenance':
+        return danger;
+      case 'maintenance_soon':
+        return warning;
+      case 'maintenance_done':
+        return mint;
+      default:
+        return purpleSoft;
+    }
+  }
+
+  IconData iconFor(String kind) {
+    switch (kind) {
+      case 'maintenance':
+        return Icons.build_circle_rounded;
+      case 'maintenance_soon':
+        return Icons.schedule_rounded;
+      case 'maintenance_done':
+        return Icons.check_circle_rounded;
+      default:
+        return Icons.campaign_rounded;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = announcements.where((a) => a['id'] != dismissedId).toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
+    final item = visible.first;
+    final kind = '${item['kind'] ?? 'notice'}';
+    final accent = colorFor(kind);
+    final persistent = kind == 'maintenance' || kind == 'maintenance_soon';
+    return Container(
+      margin: EdgeInsets.fromLTRB(14, widget.compact ? 6 : 10, 14, 4),
+      padding: EdgeInsets.symmetric(horizontal: 13, vertical: widget.compact ? 9 : 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF151821),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: accent.withAlpha(125)),
+        boxShadow: [BoxShadow(color: accent.withAlpha(18), blurRadius: 18, offset: const Offset(0, 7))],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(iconFor(kind), color: accent, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${item['title']}', style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 12)),
+                const SizedBox(height: 3),
+                Text('${item['message']}', style: const TextStyle(color: Color(0xFFE3E5EC), fontSize: 11.5, height: 1.35)),
+              ],
+            ),
+          ),
+          if (!persistent)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: () => setState(() => dismissedId = item['id'] as int?),
+              icon: const Icon(Icons.close_rounded, size: 17, color: muted),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
@@ -1467,13 +1826,8 @@ class _MainPageState extends State<MainPage> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      TeamsPage(
-        onCreate: () => setState(() => tab = 2),
-      ),
-      TeamsPage(
-        search: true,
-        onCreate: () => setState(() => tab = 2),
-      ),
+      TeamsPage(onCreate: () => setState(() => tab = 2)),
+      TeamsPage(search: true, onCreate: () => setState(() => tab = 2)),
       CreateTeamPage(onCreated: () => setState(() => tab = 3)),
       const TeamsPage(mine: true),
       const ProfilePage(),
@@ -1507,27 +1861,31 @@ class _MainPageState extends State<MainPage> {
           Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxWidth),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 380),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, animation) {
-                  final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-                  return FadeTransition(
-                    opacity: curved,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(.035, .018),
-                        end: Offset.zero,
-                      ).animate(curved),
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: .992, end: 1).animate(curved),
-                        child: child,
-                      ),
+              child: Column(
+                children: [
+                  const SafeArea(bottom: false, child: ActiveAnnouncementBanner()),
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 380),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+                        return FadeTransition(
+                          opacity: curved,
+                          child: SlideTransition(
+                            position: Tween<Offset>(begin: const Offset(.035, .018), end: Offset.zero).animate(curved),
+                            child: ScaleTransition(
+                              scale: Tween<double>(begin: .992, end: 1).animate(curved),
+                              child: child,
+                            ),
+                          ),
+                        );
+                      },
+                      child: KeyedSubtree(key: ValueKey(tab), child: pages[tab]),
                     ),
-                  );
-                },
-                child: KeyedSubtree(key: ValueKey(tab), child: pages[tab]),
+                  ),
+                ],
               ),
             ),
           ),
@@ -2545,7 +2903,7 @@ class _TeamCardState extends State<TeamCard> {
     final unread = (team['unreadCount'] as num?)?.toInt() ?? 0;
     final isPrivate = team['isPrivate'] == true;
     final game = '${team['game']}';
-    final artwork = gameArtwork[game] ?? gameArtwork.values.first;
+    final artwork = gameArtwork[game];
     final accent = gameAccent(game);
 
     return LayoutBuilder(
@@ -2601,12 +2959,32 @@ class _TeamCardState extends State<TeamCard> {
                             scale: !compact && hover ? 1.055 : 1,
                             duration: const Duration(milliseconds: 420),
                             curve: Curves.easeOutCubic,
-                            child: Image.asset(
-                              artwork,
-                              fit: BoxFit.cover,
-                              alignment: Alignment.center,
-                              filterQuality: FilterQuality.high,
-                            ),
+                            child: artwork != null
+                                ? Image.asset(
+                                    artwork,
+                                    fit: BoxFit.cover,
+                                    alignment: Alignment.center,
+                                    filterQuality: FilterQuality.high,
+                                  )
+                                : DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [accent.withAlpha(105), panelSoft, bg],
+                                      ),
+                                    ),
+                                    child: Align(
+                                      alignment: const Alignment(.68, -.15),
+                                      child: Icon(
+                                        gamePlatform(game) == '모바일'
+                                            ? Icons.phone_android_rounded
+                                            : Icons.sports_esports_rounded,
+                                        size: compact ? 72 : 56,
+                                        color: accent.withAlpha(175),
+                                      ),
+                                    ),
+                                  ),
                           ),
                           DecoratedBox(
                             decoration: BoxDecoration(
@@ -2769,6 +3147,16 @@ class _TeamCardState extends State<TeamCard> {
                                 color: isPrivate ? warning : const Color(0xFF73A7FF),
                                 compact: compact,
                               ),
+                              if ((team['ownerTier']?.toString().trim().isNotEmpty ?? false) ||
+                                  (team['ownerLevel']?.toString().trim().isNotEmpty ?? false))
+                                _MiniBadge(
+                                  text: [
+                                    if (team['ownerTier']?.toString().trim().isNotEmpty ?? false) '${team['ownerTier']}',
+                                    if (team['ownerLevel']?.toString().trim().isNotEmpty ?? false) 'Lv ${team['ownerLevel']}',
+                                  ].join(' · '),
+                                  color: warning,
+                                  compact: compact,
+                                ),
                               if (isOwner && isPrivate && team['accessCode'] != null)
                                 _MiniBadge(
                                   text: 'CODE ${team['accessCode']}',
@@ -2930,6 +3318,7 @@ class _CreateGameTileState extends State<_CreateGameTile> {
   @override
   Widget build(BuildContext context) {
     final accent = gameAccent(widget.game);
+    final artwork = gameArtwork[widget.game];
     return MouseRegion(
       onEnter: (_) => setState(() => hover = true),
       onExit: (_) => setState(() => hover = false),
@@ -2942,41 +3331,72 @@ class _CreateGameTileState extends State<_CreateGameTile> {
           borderRadius: BorderRadius.circular(16),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 190),
-            width: 142,
+            height: 86,
             decoration: BoxDecoration(
+              color: panelSoft,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: widget.selected ? accent : hover ? accent.withAlpha(120) : line, width: widget.selected ? 2 : 1),
+              border: Border.all(
+                color: widget.selected ? accent : hover ? accent.withAlpha(120) : line,
+                width: widget.selected ? 2 : 1,
+              ),
               boxShadow: widget.selected || hover
                   ? [BoxShadow(color: accent.withAlpha(34), blurRadius: 17, offset: const Offset(0, 7))]
                   : null,
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(15),
+              borderRadius: BorderRadius.circular(14),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(gameArtwork[widget.game]!, fit: BoxFit.cover, filterQuality: FilterQuality.high),
+                  if (artwork != null)
+                    Image.asset(artwork, fit: BoxFit.cover, filterQuality: FilterQuality.high)
+                  else
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [accent.withAlpha(90), panelSoft, bg],
+                        ),
+                      ),
+                    ),
+                  if (artwork == null)
+                    Align(
+                      alignment: const Alignment(.72, -.55),
+                      child: Icon(
+                        gamePlatform(widget.game) == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded,
+                        size: 34,
+                        color: accent.withAlpha(190),
+                      ),
+                    ),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.black.withAlpha(205)],
+                        colors: [Colors.transparent, Colors.black.withAlpha(215)],
                       ),
                     ),
                   ),
                   Positioned(
-                    left: 9,
+                    left: 10,
                     right: 9,
                     bottom: 8,
                     child: Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            gameDisplayName(widget.game),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                gameDisplayName(widget.game),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                              ),
+                              Text(gamePlatform(widget.game), style: const TextStyle(color: muted, fontSize: 9)),
+                            ],
                           ),
                         ),
                         if (widget.selected)
@@ -3009,8 +3429,9 @@ class CreateTeamPage extends StatefulWidget {
 }
 
 class _CreateTeamPageState extends State<CreateTeamPage> {
-  String game = games.first;
-  String mode = modes.first;
+  String platform = 'PC';
+  String game = pcGames.first;
+  late String mode = gameModes(game).first;
   String style = '편하게';
   bool mic = true;
   bool isPrivate = false;
@@ -3018,12 +3439,28 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
   int capacity = 5;
   final title = TextEditingController();
   final accessCode = TextEditingController();
+  final gameQuery = TextEditingController();
+
+  List<String> get visibleGames {
+    final source = platform == 'PC' ? pcGames : mobileGames;
+    final q = gameQuery.text.trim().toLowerCase();
+    if (q.isEmpty) return source;
+    return source.where((g) => gameDisplayName(g).toLowerCase().contains(q) || g.toLowerCase().contains(q)).toList();
+  }
 
   @override
   void dispose() {
     title.dispose();
     accessCode.dispose();
+    gameQuery.dispose();
     super.dispose();
+  }
+
+  void selectGame(String value) {
+    setState(() {
+      game = value;
+      mode = gameModes(value).first;
+    });
   }
 
   Future<void> create() async {
@@ -3062,6 +3499,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
 
   @override
   Widget build(BuildContext context) {
+    final artwork = gameArtwork[game];
     return Scaffold(
       appBar: AppBar(title: const Text('파티 만들기', style: TextStyle(fontWeight: FontWeight.w900))),
       body: ListView(
@@ -3079,21 +3517,33 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 360),
-                    child: Image.asset(
-                      gameArtwork[game]!,
-                      key: ValueKey('create-$game'),
-                      fit: BoxFit.cover,
-                      filterQuality: FilterQuality.high,
+                  if (artwork != null)
+                    Image.asset(artwork, fit: BoxFit.cover, filterQuality: FilterQuality.high)
+                  else
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [gameAccent(game).withAlpha(120), panelSoft, bg],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                      ),
                     ),
-                  ),
+                  if (artwork == null)
+                    Align(
+                      alignment: const Alignment(.75, -.2),
+                      child: Icon(
+                        platform == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded,
+                        size: 78,
+                        color: gameAccent(game).withAlpha(160),
+                      ),
+                    ),
                   DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.black.withAlpha(25), Colors.black.withAlpha(90), panel.withAlpha(245)],
+                        colors: [Colors.black.withAlpha(20), Colors.black.withAlpha(80), panel.withAlpha(245)],
                       ),
                     ),
                   ),
@@ -3123,9 +3573,15 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(gameDisplayName(game), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                        Row(
+                          children: [
+                            _MiniBadge(text: gamePlatform(game), color: gamePlatform(game) == 'PC' ? mint : warning),
+                            const SizedBox(width: 7),
+                            Expanded(child: Text(gameDisplayName(game), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
+                          ],
+                        ),
                         const SizedBox(height: 4),
-                        const Text('내가 방장이 되어 멤버 관리 · 추방 · 파티 삭제 권한을 가집니다.', style: TextStyle(color: Color(0xFFD2D6E0), height: 1.4, fontSize: 11)),
+                        const Text('내가 방장이 되어 멤버 관리 · 임시/영구 추방 · 파티 삭제 권한을 가집니다.', style: TextStyle(color: Color(0xFFD2D6E0), height: 1.4, fontSize: 11)),
                       ],
                     ),
                   ),
@@ -3135,33 +3591,89 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
           ),
           const SizedBox(height: 18),
           _FormSection(
-            title: '게임 & 모드',
+            title: '게임 선택',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('게임 선택', style: TextStyle(color: muted, fontSize: 11, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 9),
-                SizedBox(
-                  height: 102,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: games.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        avatar: const Icon(Icons.computer_rounded, size: 17),
+                        label: const Text('PC 게임'),
+                        selected: platform == 'PC',
+                        onSelected: (_) {
+                          setState(() {
+                            platform = 'PC';
+                            if (!pcGames.contains(game)) {
+                              game = pcGames.first;
+                              mode = gameModes(game).first;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        avatar: const Icon(Icons.phone_android_rounded, size: 17),
+                        label: const Text('모바일 게임'),
+                        selected: platform == '모바일',
+                        onSelected: (_) {
+                          setState(() {
+                            platform = '모바일';
+                            if (!mobileGames.contains(game)) {
+                              game = mobileGames.first;
+                              mode = gameModes(game).first;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: gameQuery,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: '게임 검색',
+                    hintText: '롤, 발로란트, 브롤스타즈…',
+                    prefixIcon: Icon(Icons.search_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (visibleGames.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('검색 결과가 없습니다.', textAlign: TextAlign.center, style: TextStyle(color: muted)),
+                  )
+                else
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 190,
+                      childAspectRatio: 1.85,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                    ),
+                    itemCount: visibleGames.length,
                     itemBuilder: (context, index) {
-                      final item = games[index];
+                      final item = visibleGames[index];
                       return _CreateGameTile(
                         game: item,
                         selected: game == item,
-                        onTap: () => setState(() => game = item),
+                        onTap: () => selectGame(item),
                       );
                     },
                   ),
-                ),
                 const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
+                  key: ValueKey('mode-$game'),
                   initialValue: mode,
                   decoration: const InputDecoration(labelText: '모드'),
-                  items: modes.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                  items: gameModes(game).map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                   onChanged: (v) => setState(() => mode = v!),
                 ),
               ],
@@ -3181,9 +3693,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                       onPressed: capacity > 2 ? () => setState(() => capacity--) : null,
                       icon: const Icon(Icons.remove_rounded),
                     ),
-                    Expanded(
-                      child: Text('$capacity 명', textAlign: TextAlign.center, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
-                    ),
+                    Expanded(child: Text('$capacity 명', textAlign: TextAlign.center, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900))),
                     IconButton.filled(
                       onPressed: capacity < 20 ? () => setState(() => capacity++) : null,
                       style: IconButton.styleFrom(backgroundColor: mint, foregroundColor: bg),
@@ -3197,22 +3707,20 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 Wrap(
                   spacing: 8,
                   children: ['빡겜', '편하게', '상관없음']
-                      .map(
-                        (s) => ChoiceChip(
-                          label: Text(s),
-                          selected: style == s,
-                          selectedColor: purple.withAlpha(55),
-                          side: BorderSide(color: style == s ? purple : line),
-                          onSelected: (_) => setState(() => style = s),
-                        ),
-                      )
+                      .map((s) => ChoiceChip(
+                            label: Text(s),
+                            selected: style == s,
+                            selectedColor: purple.withAlpha(55),
+                            side: BorderSide(color: style == s ? purple : line),
+                            onSelected: (_) => setState(() => style = s),
+                          ))
                       .toList(),
                 ),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('마이크 사용', style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: const Text('음성 채팅을 사용할 파티인지 표시해요.', style: TextStyle(color: muted, fontSize: 11)),
+                  subtitle: const Text('음성 대화를 원하는 파티인지 멤버들이 미리 알 수 있어요.', style: TextStyle(color: muted, fontSize: 11)),
                   activeThumbColor: mint,
                   value: mic,
                   onChanged: (v) => setState(() => mic = v),
@@ -3236,9 +3744,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                   onChanged: (v) {
                     setState(() {
                       isPrivate = v;
-                      if (v && accessCode.text.isEmpty) {
-                        accessCode.text = (1000 + math.Random().nextInt(9000)).toString();
-                      }
+                      if (v && accessCode.text.isEmpty) accessCode.text = (1000 + math.Random().nextInt(9000)).toString();
                     });
                   },
                 ),
@@ -3257,20 +3763,13 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                                   maxLength: 4,
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 7),
-                                  decoration: const InputDecoration(
-                                    labelText: '입장 코드',
-                                    hintText: '1234',
-                                    counterText: '',
-                                    prefixIcon: Icon(Icons.password_rounded),
-                                  ),
+                                  decoration: const InputDecoration(labelText: '입장 코드', hintText: '1234', counterText: '', prefixIcon: Icon(Icons.password_rounded)),
                                 ),
                               ),
                               const SizedBox(width: 9),
                               IconButton.filledTonal(
                                 tooltip: '랜덤 코드 만들기',
-                                onPressed: () => setState(() {
-                                  accessCode.text = (1000 + math.Random().nextInt(9000)).toString();
-                                }),
+                                onPressed: () => setState(() => accessCode.text = (1000 + math.Random().nextInt(9000)).toString()),
                                 icon: const Icon(Icons.casino_rounded),
                               ),
                             ],
@@ -3288,10 +3787,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
               controller: title,
               maxLength: 80,
               maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: '예) 즐겜 위주! 매너 좋으신 분 같이 해요 🙌',
-                counterText: '',
-              ),
+              decoration: const InputDecoration(hintText: '예) 즐겜 위주! 매너 좋으신 분 같이 해요 🙌', counterText: ''),
             ),
           ),
           const SizedBox(height: 18),
@@ -3363,17 +3859,36 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   late final TextEditingController nickname;
   bool busy = false;
+  bool gamesLoading = true;
+  List<Map<String, dynamic>> gameProfiles = [];
 
   @override
   void initState() {
     super.initState();
     nickname = TextEditingController(text: Api.user['nickname'] as String? ?? '');
+    loadGameProfiles();
   }
 
   @override
   void dispose() {
     nickname.dispose();
     super.dispose();
+  }
+
+  Future<void> loadGameProfiles() async {
+    try {
+      final rows = await Api.request('GET', '/community/me/games');
+      if (!mounted) return;
+      setState(() {
+        gameProfiles = (rows as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        gamesLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => gamesLoading = false);
+        notice(context, e);
+      }
+    }
   }
 
   Future<void> save({bool photo = false, bool remove = false}) async {
@@ -3422,6 +3937,95 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> editGameProfile([Map<String, dynamic>? existing]) async {
+    String selectedGame = existing?['game'] as String? ?? allGames.first;
+    final tier = TextEditingController(text: existing?['tier']?.toString() ?? '');
+    final level = TextEditingController(text: existing?['level']?.toString() ?? '');
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          backgroundColor: panelSoft,
+          title: Text(existing == null ? '게임 정보 추가' : '게임 정보 수정'),
+          content: SizedBox(
+            width: 470,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selectedGame,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: '게임'),
+                  items: allGames.map((g) => DropdownMenuItem(value: g, child: Text('${gameDisplayName(g)} · ${gamePlatform(g)}'))).toList(),
+                  onChanged: existing == null ? (v) => setLocal(() => selectedGame = v ?? selectedGame) : null,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: tier,
+                  maxLength: 60,
+                  decoration: InputDecoration(labelText: '티어 / 랭크', hintText: tierHint(selectedGame), counterText: ''),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: level,
+                  maxLength: 60,
+                  decoration: const InputDecoration(labelText: '레벨 / 전투력 / 트로피 등', hintText: '예) Lv. 245 / 35,000 트로피', counterText: ''),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+            FilledButton(
+              onPressed: () {
+                if (tier.text.trim().isEmpty && level.text.trim().isEmpty) {
+                  notice(context, '티어 또는 레벨 중 하나는 입력해주세요.');
+                  return;
+                }
+                Navigator.pop(context, {
+                  'game': selectedGame,
+                  'tier': tier.text.trim(),
+                  'level': level.text.trim(),
+                });
+              },
+              child: const Text('저장'),
+            ),
+          ],
+        ),
+      ),
+    );
+    tier.dispose();
+    level.dispose();
+    if (result == null) return;
+    try {
+      await Api.request('POST', '/community/me/games', result);
+      if (!mounted) return;
+      successNotice(context, '게임 정보 저장', '${gameDisplayName(result['game']!)} 정보를 저장했습니다.');
+      await loadGameProfiles();
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<void> removeGameProfile(Map<String, dynamic> profile) async {
+    final ok = await askConfirm(
+      context,
+      title: '게임 정보를 삭제할까요?',
+      message: '${gameDisplayName('${profile['game']}')}의 티어/레벨 정보가 프로필에서 사라집니다.',
+      action: '삭제',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      final game = Uri.encodeQueryComponent('${profile['game']}');
+      await Api.request('DELETE', '/community/me/games?game=$game');
+      await loadGameProfiles();
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
   void logout() {
     Api.logout();
     Navigator.of(context).pushAndRemoveUntil(
@@ -3443,10 +4047,7 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 Container(
                   padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(colors: [purple, mint]),
-                  ),
+                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [purple, mint])),
                   child: Container(
                     padding: const EdgeInsets.all(3),
                     decoration: const BoxDecoration(color: panel, shape: BoxShape.circle),
@@ -3466,15 +4067,51 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           const SizedBox(height: 14),
           _FormSection(
+            title: '게임 티어 · 레벨',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('파티원 목록과 플레이어 프로필에 표시됩니다.', style: TextStyle(color: muted, fontSize: 11)),
+                const SizedBox(height: 12),
+                if (gamesLoading)
+                  const Center(child: CircularProgressIndicator(color: mint))
+                else if (gameProfiles.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: Text('등록한 게임 정보가 없습니다. 자주 하는 게임부터 추가해보세요.', style: TextStyle(color: muted)),
+                  )
+                else
+                  ...gameProfiles.map((profile) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(color: panelSoft, borderRadius: BorderRadius.circular(14), border: Border.all(color: line)),
+                        child: Row(children: [
+                          Icon(gamePlatform('${profile['game']}') == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded, color: gameAccent('${profile['game']}')),
+                          const SizedBox(width: 10),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(gameDisplayName('${profile['game']}'), style: const TextStyle(fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 3),
+                            Text(
+                              [if (profile['tier'] != null && '${profile['tier']}'.isNotEmpty) '${profile['tier']}', if (profile['level'] != null && '${profile['level']}'.isNotEmpty) '${profile['level']}'].join(' · '),
+                              style: const TextStyle(color: mint, fontSize: 11, fontWeight: FontWeight.w700),
+                            ),
+                          ])),
+                          IconButton(onPressed: () => editGameProfile(profile), icon: const Icon(Icons.edit_outlined, size: 19)),
+                          IconButton(onPressed: () => removeGameProfile(profile), icon: const Icon(Icons.delete_outline_rounded, color: danger, size: 19)),
+                        ]),
+                      )),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(onPressed: () => editGameProfile(), icon: const Icon(Icons.add_rounded, color: mint), label: const Text('게임 정보 추가')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _FormSection(
             title: '프로필 편집',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextField(
-                  controller: nickname,
-                  maxLength: 30,
-                  decoration: const InputDecoration(labelText: '닉네임', counterText: ''),
-                ),
+                TextField(controller: nickname, maxLength: 30, decoration: const InputDecoration(labelText: '닉네임', counterText: '')),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: busy ? null : () => save(photo: true),
@@ -3482,34 +4119,21 @@ class _ProfilePageState extends State<ProfilePage> {
                   label: const Text('프로필 사진 선택'),
                 ),
                 if (Api.user['avatar'] != null)
-                  TextButton(
-                    onPressed: busy ? null : () => save(remove: true),
-                    child: const Text('사진 제거', style: TextStyle(color: danger)),
-                  ),
+                  TextButton(onPressed: busy ? null : () => save(remove: true), child: const Text('사진 제거', style: TextStyle(color: danger))),
                 const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: busy ? null : save,
-                  child: Text(busy ? '저장 중…' : '프로필 저장'),
-                ),
+                FilledButton(onPressed: busy ? null : save, child: Text(busy ? '저장 중…' : '프로필 저장')),
               ],
             ),
           ),
           const SizedBox(height: 14),
           GlowCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('계정', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 8),
-                const Text('사진과 닉네임은 파티 멤버와 채팅에 표시됩니다.', style: TextStyle(color: muted, height: 1.5, fontSize: 12)),
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: logout,
-                  icon: const Icon(Icons.logout_rounded),
-                  label: const Text('로그아웃'),
-                ),
-              ],
-            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('계정', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 8),
+              const Text('사진·닉네임·게임 티어는 파티 멤버와 채팅에 표시됩니다.', style: TextStyle(color: muted, height: 1.5, fontSize: 12)),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(onPressed: logout, icon: const Icon(Icons.logout_rounded), label: const Text('로그아웃')),
+            ]),
           ),
         ],
       ),
@@ -3626,8 +4250,22 @@ class _ChatPageState extends State<ChatPage> {
     });
     socket.on('team:kicked', (dynamic raw) {
       if (raw is Map && raw['teamId'] == teamId) {
-        exitChat('방장에 의해 파티에서 제외되었습니다.');
+        final kind = raw['duration'] == 'permanent' ? '영구 추방' : '5분 임시 추방';
+        exitChat('방장에 의해 파티에서 제외되었습니다. ($kind)');
       }
+    });
+    socket.on('moderation:update', (dynamic raw) {
+      if (!mounted || raw is! Map || raw['type'] != 'suspended') return;
+      closing = true;
+      Api.logout();
+      notice(context, '관리자에 의해 이용 정지가 적용되었습니다. 사유: ${raw['reason'] ?? '운영 정책 위반'}', warningNotice: true, title: '계정 이용 정지');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthPage()),
+          (_) => false,
+        );
+      });
     });
     socket.on('team:deleted', (dynamic raw) {
       if (raw is Map && raw['teamId'] == teamId) {
@@ -3687,7 +4325,7 @@ class _ChatPageState extends State<ChatPage> {
         members = memberRows;
         ready = true;
         loading = false;
-        more = rows.length == 50;
+        more = rows.length == 40;
         status = '실시간 연결됨 · ${members.length}명 참여 중';
       });
       if (messages.isNotEmpty) await markRead(messages.last['id'] as int);
@@ -3787,7 +4425,7 @@ class _ChatPageState extends State<ChatPage> {
       if (!mounted || current != generation) return;
       final list = (rows as List).map((r) => Map<String, dynamic>.from(r as Map)).toList();
       addMessages(list);
-      setState(() => more = list.length == 50);
+      setState(() => more = list.length == 40);
     } catch (e) {
       if (mounted) notice(context, e);
     } finally {
@@ -3888,6 +4526,23 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
         actions: [
+          if (widget.team['mic'] == true)
+            IconButton(
+              tooltip: '음성 채팅',
+              onPressed: ready
+                  ? () => showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (_) => VoiceRoomSheet(
+                          teamId: teamId,
+                          socket: socket,
+                          ack: ack,
+                        ),
+                      )
+                  : null,
+              icon: const Icon(Icons.mic_rounded, color: mint),
+            ),
           IconButton(
             tooltip: '파티원',
             onPressed: () => showModalBottomSheet(
@@ -3940,6 +4595,7 @@ class _ChatPageState extends State<ChatPage> {
             constraints: const BoxConstraints(maxWidth: 720),
             child: Column(
               children: [
+                const ActiveAnnouncementBanner(compact: true),
                 if (loading) const LinearProgressIndicator(color: mint, minHeight: 2),
                 Container(
                   margin: const EdgeInsets.fromLTRB(14, 8, 14, 0),
@@ -4028,15 +4684,16 @@ class _ChatPageState extends State<ChatPage> {
                         child: TextField(
                           controller: draft,
                           readOnly: pending != null,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.newline,
                           minLines: 1,
-                          maxLines: 4,
+                          maxLines: 5,
                           maxLength: 2000,
                           decoration: const InputDecoration(
-                            hintText: '메시지를 입력하세요…',
+                            hintText: '메시지를 입력하세요… (Enter 줄바꿈)',
                             counterText: '',
                             fillColor: panelSoft,
                           ),
-                          onSubmitted: (_) => send(),
                         ),
                       ),
                       const SizedBox(width: 9),
@@ -4140,6 +4797,329 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
+
+class VoiceRoomSheet extends StatefulWidget {
+  final int teamId;
+  final io.Socket socket;
+  final Future<dynamic> Function(String event, dynamic data) ack;
+
+  const VoiceRoomSheet({
+    super.key,
+    required this.teamId,
+    required this.socket,
+    required this.ack,
+  });
+
+  @override
+  State<VoiceRoomSheet> createState() => _VoiceRoomSheetState();
+}
+
+class _VoiceRoomSheetState extends State<VoiceRoomSheet> {
+  MediaStream? localStream;
+  final Map<String, RTCPeerConnection> peers = {};
+  final Map<String, MediaStream> remoteStreams = {};
+  bool loading = true;
+  bool mutedMic = false;
+  bool leaving = false;
+  String status = '마이크 연결 중…';
+
+  int get participantCount => peers.length + 1;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.socket.on('voice:peer_joined', _onPeerJoined);
+    widget.socket.on('voice:peer_left', _onPeerLeft);
+    widget.socket.on('voice:offer', _onOffer);
+    widget.socket.on('voice:answer', _onAnswer);
+    widget.socket.on('voice:ice', _onIce);
+    unawaited(_start());
+  }
+
+  Future<void> _start() async {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': false,
+      });
+      final raw = await widget.ack('voice:join', {'teamId': widget.teamId});
+      final data = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      final rows = data['peers'] is List ? data['peers'] as List : const [];
+      for (final item in rows) {
+        if (item is! Map) continue;
+        final peerId = '${item['socketId'] ?? ''}';
+        if (peerId.isNotEmpty) await _offerTo(peerId);
+      }
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        status = '음성 채팅 연결됨';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        status = _cleanError(e);
+      });
+    }
+  }
+
+  String _cleanError(Object e) {
+    final text = e.toString().replaceFirst('Exception: ', '');
+    if (text.toLowerCase().contains('permission')) {
+      return '마이크 권한이 필요합니다. 기기 설정에서 PyGa 마이크 권한을 허용해주세요.';
+    }
+    return text;
+  }
+
+  Future<RTCPeerConnection> _ensurePeer(String peerId) async {
+    final existing = peers[peerId];
+    if (existing != null) return existing;
+
+    final pc = await createPeerConnection({
+      'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+      ],
+      'sdpSemantics': 'unified-plan',
+    });
+    final stream = localStream;
+    if (stream != null) {
+      for (final track in stream.getTracks()) {
+        await pc.addTrack(track, stream);
+      }
+    }
+    pc.onIceCandidate = (candidate) {
+      if (candidate.candidate == null) return;
+      widget.socket.emitWithAck(
+        'voice:ice',
+        {
+          'teamId': widget.teamId,
+          'target': peerId,
+          'candidate': candidate.toMap(),
+        },
+        ack: (_) {},
+      );
+    };
+    pc.onTrack = (event) {
+      if (event.streams.isNotEmpty) {
+        remoteStreams[peerId] = event.streams.first;
+      }
+      if (mounted) setState(() {});
+    };
+    pc.onConnectionState = (state) {
+      if (!mounted) return;
+      setState(() {
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          status = '일부 음성 연결에 실패했습니다. 다시 입장해보세요.';
+        }
+      });
+    };
+    peers[peerId] = pc;
+    if (mounted) setState(() {});
+    return pc;
+  }
+
+  Future<void> _offerTo(String peerId) async {
+    try {
+      final pc = await _ensurePeer(peerId);
+      final offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await widget.ack('voice:offer', {
+        'teamId': widget.teamId,
+        'target': peerId,
+        'sdp': {'sdp': offer.sdp, 'type': offer.type},
+      });
+    } catch (_) {}
+  }
+
+  void _onPeerJoined(dynamic raw) {
+    if (!mounted || raw is! Map || raw['teamId'] != widget.teamId) return;
+    // 새로 들어온 사용자가 기존 사용자들에게 offer를 보냅니다.
+    setState(() {});
+  }
+
+  void _onPeerLeft(dynamic raw) {
+    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    final peerId = '${raw['socketId'] ?? ''}';
+    final pc = peers.remove(peerId);
+    remoteStreams.remove(peerId);
+    unawaited(pc?.close() ?? Future<void>.value());
+    if (mounted) setState(() {});
+  }
+
+  void _onOffer(dynamic raw) {
+    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    unawaited(_answerOffer(Map<String, dynamic>.from(raw)));
+  }
+
+  Future<void> _answerOffer(Map<String, dynamic> raw) async {
+    try {
+      final from = '${raw['from'] ?? ''}';
+      final sdp = raw['sdp'];
+      if (from.isEmpty || sdp is! Map) return;
+      final pc = await _ensurePeer(from);
+      await pc.setRemoteDescription(RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'offer'}'));
+      final answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await widget.ack('voice:answer', {
+        'teamId': widget.teamId,
+        'target': from,
+        'sdp': {'sdp': answer.sdp, 'type': answer.type},
+      });
+    } catch (_) {}
+  }
+
+  void _onAnswer(dynamic raw) {
+    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    unawaited(_applyAnswer(Map<String, dynamic>.from(raw)));
+  }
+
+  Future<void> _applyAnswer(Map<String, dynamic> raw) async {
+    try {
+      final from = '${raw['from'] ?? ''}';
+      final sdp = raw['sdp'];
+      if (from.isEmpty || sdp is! Map) return;
+      final pc = peers[from];
+      if (pc == null) return;
+      await pc.setRemoteDescription(RTCSessionDescription('${sdp['sdp'] ?? ''}', '${sdp['type'] ?? 'answer'}'));
+    } catch (_) {}
+  }
+
+  void _onIce(dynamic raw) {
+    if (raw is! Map || raw['teamId'] != widget.teamId) return;
+    unawaited(_applyIce(Map<String, dynamic>.from(raw)));
+  }
+
+  Future<void> _applyIce(Map<String, dynamic> raw) async {
+    try {
+      final from = '${raw['from'] ?? ''}';
+      final candidate = raw['candidate'];
+      if (from.isEmpty || candidate is! Map) return;
+      final pc = await _ensurePeer(from);
+      final line = candidate['sdpMLineIndex'];
+      await pc.addCandidate(RTCIceCandidate(
+        candidate['candidate']?.toString(),
+        candidate['sdpMid']?.toString(),
+        line is num ? line.toInt() : int.tryParse('$line'),
+      ));
+    } catch (_) {}
+  }
+
+  void _toggleMute() {
+    final stream = localStream;
+    if (stream == null) return;
+    final next = !mutedMic;
+    for (final track in stream.getAudioTracks()) {
+      track.enabled = !next;
+    }
+    setState(() => mutedMic = next);
+  }
+
+  Future<void> _leave({bool pop = true}) async {
+    if (leaving) return;
+    leaving = true;
+    try {
+      widget.socket.emitWithAck(
+        'voice:leave',
+        {'teamId': widget.teamId},
+        ack: (_) {},
+      );
+      for (final pc in peers.values) {
+        await pc.close();
+      }
+      peers.clear();
+      remoteStreams.clear();
+      final stream = localStream;
+      if (stream != null) {
+        for (final track in stream.getTracks()) {
+          track.stop();
+        }
+        await stream.dispose();
+      }
+      localStream = null;
+    } catch (_) {}
+    if (pop && mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    widget.socket.off('voice:peer_joined', _onPeerJoined);
+    widget.socket.off('voice:peer_left', _onPeerLeft);
+    widget.socket.off('voice:offer', _onOffer);
+    widget.socket.off('voice:answer', _onAnswer);
+    widget.socket.off('voice:ice', _onIce);
+    if (!leaving) unawaited(_leave(pop: false));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+        padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.viewPaddingOf(context).bottom + 22),
+        decoration: const BoxDecoration(
+          color: panel,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          border: Border(top: BorderSide(color: line)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 38, height: 4, decoration: BoxDecoration(color: line, borderRadius: BorderRadius.circular(8))),
+              const SizedBox(height: 20),
+              const Icon(Icons.graphic_eq_rounded, color: mint, size: 38),
+              const SizedBox(height: 10),
+              const Text('파티 음성 채팅', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text(
+                loading ? '연결 준비 중…' : '$participantCount명 연결 · $status',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: status == '음성 채팅 연결됨' ? mint : muted, fontSize: 12, height: 1.45),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: loading || localStream == null ? null : _toggleMute,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: mutedMic ? panelSoft : mint,
+                        foregroundColor: mutedMic ? Colors.white : bg,
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                      icon: Icon(mutedMic ? Icons.mic_off_rounded : Icons.mic_rounded),
+                      label: Text(mutedMic ? '마이크 켜기' : '마이크 끄기'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _leave(),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: danger,
+                        side: const BorderSide(color: danger),
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                      icon: const Icon(Icons.call_end_rounded),
+                      label: const Text('나가기'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '베타 음성 기능 · 네트워크 환경에 따라 연결 품질이 달라질 수 있습니다.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: muted, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      );
+  }
+}
+
 class TeamMembersSheet extends StatefulWidget {
   final int teamId;
   final bool owner;
@@ -4179,24 +5159,59 @@ class _TeamMembersSheetState extends State<TeamMembersSheet> {
     }
   }
 
-  Future<void> kick(Map<String, dynamic> member) async {
-    final ok = await askConfirm(
-      context,
-      title: '${member['nickname']}님을 내보낼까요?',
-      message: '추방된 파티원은 이 채팅방에 더 이상 접근할 수 없습니다.',
-      action: '추방',
-      destructive: true,
+  Future<void> openProfile(Map<String, dynamic> member) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PlayerProfileSheet(userId: member['id'] as int, teamId: widget.teamId),
     );
-    if (!ok) return;
+  }
 
+  Future<String?> chooseKickType(Map<String, dynamic> member) {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: panelSoft,
+        title: Text('${member['nickname']}님 추방'),
+        content: const Text(
+          '임시 추방은 5분 동안 다시 들어올 수 없고, 영구 추방은 이 파티에 다시 참가할 수 없습니다.',
+          style: TextStyle(color: muted, height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, '5m'),
+            child: const Text('5분 임시 추방'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: danger),
+            onPressed: () => Navigator.pop(context, 'permanent'),
+            child: const Text('영구 추방'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> kick(Map<String, dynamic> member) async {
+    final duration = await chooseKickType(member);
+    if (duration == null) return;
     setState(() => kicking = member['id'] as int);
     try {
       await widget.ack('team:kick', {
         'teamId': widget.teamId,
         'memberId': member['id'],
+        'duration': duration,
       });
       if (!mounted) return;
-      successNotice(context, '파티원 추방 완료', '${member['nickname']}님을 파티에서 내보냈습니다.');
+      successNotice(
+        context,
+        '파티원 추방 완료',
+        duration == 'permanent'
+            ? '${member['nickname']}님을 이 파티에서 영구 추방했습니다.'
+            : '${member['nickname']}님을 5분 동안 임시 추방했습니다.',
+      );
       await load();
     } catch (e) {
       if (mounted) notice(context, e);
@@ -4208,7 +5223,7 @@ class _TeamMembersSheetState extends State<TeamMembersSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .78),
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .82),
       decoration: const BoxDecoration(
         color: Color(0xFF10121A),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -4223,32 +5238,24 @@ class _TeamMembersSheetState extends State<TeamMembersSheet> {
             Container(width: 42, height: 4, decoration: BoxDecoration(color: line, borderRadius: BorderRadius.circular(4))),
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 18, 12, 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.groups_2_rounded, color: mint),
-                  const SizedBox(width: 10),
-                  Text('파티원 ${members.length}명', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
-                  const Spacer(),
-                  IconButton(onPressed: load, icon: const Icon(Icons.refresh_rounded)),
-                ],
-              ),
+              child: Row(children: [
+                const Icon(Icons.groups_2_rounded, color: mint),
+                const SizedBox(width: 10),
+                Text('파티원 ${members.length}명', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+                const Spacer(),
+                IconButton(onPressed: load, icon: const Icon(Icons.refresh_rounded)),
+              ]),
             ),
             if (widget.owner)
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 18),
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: purple.withAlpha(20),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: purple.withAlpha(60)),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.workspace_premium_rounded, color: warning, size: 18),
-                    SizedBox(width: 8),
-                    Expanded(child: Text('방장 권한으로 다른 파티원을 추방할 수 있습니다.', style: TextStyle(color: muted, fontSize: 11))),
-                  ],
-                ),
+                decoration: BoxDecoration(color: purple.withAlpha(20), borderRadius: BorderRadius.circular(14), border: Border.all(color: purple.withAlpha(60))),
+                child: const Row(children: [
+                  Icon(Icons.workspace_premium_rounded, color: warning, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('방장은 파티원을 5분 임시 추방하거나 영구 추방할 수 있습니다.', style: TextStyle(color: muted, fontSize: 11))),
+                ]),
               ),
             Flexible(
               child: loading
@@ -4262,43 +5269,40 @@ class _TeamMembersSheetState extends State<TeamMembersSheet> {
                         final member = members[index];
                         final me = member['id'] == Api.user['id'];
                         final owner = member['isOwner'] == true;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          child: Row(
-                            children: [
+                        final detail = [
+                          if (member['tier'] != null && '${member['tier']}'.isNotEmpty) '${member['tier']}',
+                          if (member['level'] != null && '${member['level']}'.isNotEmpty) '${member['level']}',
+                        ].join(' · ');
+                        return InkWell(
+                          onTap: () => openProfile(member),
+                          borderRadius: BorderRadius.circular(14),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+                            child: Row(children: [
                               Avatar(member['avatar'], radius: 22),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Flexible(child: Text('${member['nickname']}', style: const TextStyle(fontWeight: FontWeight.w800))),
-                                        if (me) ...[
-                                          const SizedBox(width: 6),
-                                          const _MiniBadge(text: '나', color: mint),
-                                        ],
-                                        if (owner) ...[
-                                          const SizedBox(width: 6),
-                                          const Icon(Icons.workspace_premium_rounded, color: warning, size: 17),
-                                        ],
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(owner ? '방장' : '파티원', style: const TextStyle(color: muted, fontSize: 11)),
-                                  ],
-                                ),
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Row(children: [
+                                    Flexible(child: Text('${member['nickname']}', style: const TextStyle(fontWeight: FontWeight.w800))),
+                                    if (me) ...[const SizedBox(width: 6), const _MiniBadge(text: '나', color: mint)],
+                                    if (owner) ...[const SizedBox(width: 6), const Icon(Icons.workspace_premium_rounded, color: warning, size: 17)],
+                                  ]),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    detail.isEmpty ? (owner ? '방장 · 프로필 보기' : '파티원 · 프로필 보기') : '$detail · 프로필 보기',
+                                    style: TextStyle(color: detail.isEmpty ? muted : mint, fontSize: 11, fontWeight: detail.isEmpty ? FontWeight.normal : FontWeight.w700),
+                                  ),
+                                ]),
                               ),
                               if (widget.owner && !owner)
                                 TextButton(
                                   onPressed: kicking == null ? () => kick(member) : null,
-                                  child: Text(
-                                    kicking == member['id'] ? '처리 중…' : '추방',
-                                    style: const TextStyle(color: danger, fontWeight: FontWeight.w800),
-                                  ),
-                                ),
-                            ],
+                                  child: Text(kicking == member['id'] ? '처리 중…' : '추방', style: const TextStyle(color: danger, fontWeight: FontWeight.w800)),
+                                )
+                              else
+                                const Icon(Icons.chevron_right_rounded, color: muted),
+                            ]),
                           ),
                         );
                       },
@@ -4310,3 +5314,177 @@ class _TeamMembersSheetState extends State<TeamMembersSheet> {
     );
   }
 }
+
+class PlayerProfileSheet extends StatefulWidget {
+  final int userId;
+  final int teamId;
+  const PlayerProfileSheet({super.key, required this.userId, required this.teamId});
+
+  @override
+  State<PlayerProfileSheet> createState() => _PlayerProfileSheetState();
+}
+
+class _PlayerProfileSheetState extends State<PlayerProfileSheet> {
+  Map<String, dynamic>? profile;
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    try {
+      final raw = await Api.request('GET', '/community/players/${widget.userId}');
+      if (!mounted) return;
+      setState(() {
+        profile = Map<String, dynamic>.from(raw as Map);
+        loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        notice(context, e);
+      }
+    }
+  }
+
+  Future<void> report() async {
+    if (profile?['isMe'] == true) return;
+    String category = '욕설/비속어';
+    final details = TextEditingController();
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          backgroundColor: panelSoft,
+          title: Text('${profile?['nickname'] ?? '플레이어'} 신고'),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: category,
+                  decoration: const InputDecoration(labelText: '신고 유형'),
+                  items: const [
+                    DropdownMenuItem(value: '욕설/비속어', child: Text('욕설/비속어')),
+                    DropdownMenuItem(value: '괴롭힘/비매너', child: Text('괴롭힘/비매너')),
+                    DropdownMenuItem(value: '스팸/도배', child: Text('스팸/도배')),
+                    DropdownMenuItem(value: '부적절한 닉네임', child: Text('부적절한 닉네임')),
+                    DropdownMenuItem(value: '기타', child: Text('기타')),
+                  ],
+                  onChanged: (v) => setLocal(() => category = v ?? category),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: details,
+                  minLines: 4,
+                  maxLines: 7,
+                  maxLength: 1000,
+                  decoration: const InputDecoration(
+                    labelText: '신고 내용',
+                    hintText: '어떤 말을 했는지, 어떤 상황이었는지 적어주세요. 관리자만 확인합니다.',
+                    counterText: '',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: danger),
+              onPressed: () {
+                if (details.text.trim().length < 2) {
+                  notice(context, '신고 내용을 입력해주세요.');
+                  return;
+                }
+                Navigator.pop(context, {'category': category, 'details': details.text.trim()});
+              },
+              child: const Text('관리자에게 신고'),
+            ),
+          ],
+        ),
+      ),
+    );
+    details.dispose();
+    if (result == null) return;
+    try {
+      await Api.request('POST', '/community/reports', {
+        'reportedUserId': widget.userId,
+        'teamId': widget.teamId,
+        ...result,
+      });
+      if (!mounted) return;
+      successNotice(context, '신고 접수 완료', '관리자에게 신고 내용이 전달되었습니다. 처리 결과는 운영 기록에 남습니다.');
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final profiles = (profile?['gameProfiles'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ??
+        [];
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .85),
+      decoration: const BoxDecoration(
+        color: Color(0xFF10121A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: line)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: loading
+            ? const Center(child: Padding(padding: EdgeInsets.all(50), child: CircularProgressIndicator(color: mint)))
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+                children: [
+                  Center(child: Container(width: 42, height: 4, decoration: BoxDecoration(color: line, borderRadius: BorderRadius.circular(4)))),
+                  const SizedBox(height: 22),
+                  Center(child: Avatar(profile?['avatar'], radius: 44)),
+                  const SizedBox(height: 12),
+                  Text('${profile?['nickname'] ?? ''}', textAlign: TextAlign.center, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 18),
+                  const Text('게임 티어 · 레벨', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 9),
+                  if (profiles.isEmpty)
+                    const GlowCard(child: Text('등록된 게임 정보가 없습니다.', style: TextStyle(color: muted)))
+                  else
+                    ...profiles.map((g) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(color: panelSoft, borderRadius: BorderRadius.circular(14), border: Border.all(color: line)),
+                          child: Row(children: [
+                            Icon(gamePlatform('${g['game']}') == '모바일' ? Icons.phone_android_rounded : Icons.sports_esports_rounded, color: gameAccent('${g['game']}')),
+                            const SizedBox(width: 10),
+                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(gameDisplayName('${g['game']}'), style: const TextStyle(fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 3),
+                              Text(
+                                [if (g['tier'] != null && '${g['tier']}'.isNotEmpty) '${g['tier']}', if (g['level'] != null && '${g['level']}'.isNotEmpty) '${g['level']}'].join(' · '),
+                                style: const TextStyle(color: mint, fontSize: 11),
+                              ),
+                            ])),
+                          ]),
+                        )),
+                  if (profile?['isMe'] != true) ...[
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      onPressed: report,
+                      style: OutlinedButton.styleFrom(foregroundColor: danger, side: const BorderSide(color: danger)),
+                      icon: const Icon(Icons.flag_outlined),
+                      label: const Text('이 플레이어 신고하기'),
+                    ),
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+}
+

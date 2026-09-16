@@ -11,7 +11,10 @@ export class UsersService {
   ) {}
 
   findByEmail(email: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { email } });
+    return this.usersRepository
+      .createQueryBuilder("u")
+      .where("lower(u.email) = lower(:email)", { email: email.trim() })
+      .getOne();
   }
 
   findById(id: number): Promise<User | null> {

@@ -33,7 +33,10 @@ export class CommunityService {
 
   async me(uid: number) {
     const [u] = await this.db.query(
-      'SELECT id,nickname,email,avatar,is_admin AS "isAdmin","createdAt" FROM users WHERE id=$1',
+      `SELECT id,nickname,email,avatar,is_admin AS "isAdmin","createdAt",
+        suspended_until AS "suspendedUntil",
+        suspension_permanent AS "suspensionPermanent"
+       FROM users WHERE id=$1`,
       [uid],
     );
     if (!u) throw new NotFoundException();
@@ -87,12 +90,65 @@ export class CommunityService {
     return this.me(uid);
   }
 
+  async myGameProfiles(uid: number) {
+    return this.db.query(
+      `SELECT game,tier,level,updated_at AS "updatedAt"
+       FROM user_game_profiles WHERE user_id=$1 ORDER BY updated_at DESC,game`,
+      [uid],
+    );
+  }
+
+  async saveGameProfile(uid: number, data: any) {
+    const game = boundedText(data?.game, 40, 2);
+    const tier = data?.tier == null || String(data.tier).trim() === ""
+      ? null
+      : boundedText(String(data.tier), 60, 1);
+    const level = data?.level == null || String(data.level).trim() === ""
+      ? null
+      : boundedText(String(data.level), 60, 1);
+    if (!tier && !level) {
+      throw new BadRequestException("티어 또는 레벨 중 하나는 입력해주세요.");
+    }
+    const [row] = await this.db.query(
+      `INSERT INTO user_game_profiles(user_id,game,tier,level,updated_at)
+       VALUES($1,$2,$3,$4,now())
+       ON CONFLICT(user_id,game) DO UPDATE SET tier=EXCLUDED.tier,level=EXCLUDED.level,updated_at=now()
+       RETURNING game,tier,level,updated_at AS "updatedAt"`,
+      [uid, game, tier, level],
+    );
+    return row;
+  }
+
+  async deleteGameProfile(uid: number, game: unknown) {
+    const value = boundedText(game, 40, 2);
+    await this.db.query(
+      "DELETE FROM user_game_profiles WHERE user_id=$1 AND game=$2",
+      [uid, value],
+    );
+    return { game: value };
+  }
+
+  async playerProfile(requesterId: number, userId: number) {
+    const [user] = await this.db.query(
+      `SELECT id,nickname,avatar FROM users WHERE id=$1`,
+      [userId],
+    );
+    if (!user) throw new NotFoundException("플레이어를 찾을 수 없습니다.");
+    const gameProfiles = await this.db.query(
+      `SELECT game,tier,level,updated_at AS "updatedAt"
+       FROM user_game_profiles WHERE user_id=$1 ORDER BY updated_at DESC,game`,
+      [userId],
+    );
+    return { ...user, gameProfiles, isMe: requesterId === userId };
+  }
+
   teams(uid: number, mine: boolean) {
     return this.db.query(
       `SELECT t.id,t.title,t.game,t.mode,t.style,t.mic,t.capacity,t.owner_id,t.created_at,
         t.is_private AS "isPrivate",
         CASE WHEN t.owner_id=$1 THEN t.access_code ELSE NULL END AS "accessCode",
         u.nickname AS "ownerName",u.avatar AS "ownerAvatar",
+        gp.tier AS "ownerTier",gp.level AS "ownerLevel",
         (SELECT COUNT(*)::int FROM team_members m WHERE m.team_id=t.id) AS "memberCount",
         EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.user_id=$1) AS joined,
         (t.owner_id=$1) AS "isOwner",
@@ -104,6 +160,7 @@ export class CommunityService {
           ELSE 0 END AS "unreadCount"
       FROM teams t
       JOIN users u ON u.id=t.owner_id
+      LEFT JOIN user_game_profiles gp ON gp.user_id=u.id AND gp.game=t.game
       WHERE ($2::boolean=false OR EXISTS(
         SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.user_id=$1
       ))
@@ -153,6 +210,25 @@ export class CommunityService {
         id,
       ]);
       if (!t) throw new NotFoundException("파티를 찾을 수 없습니다.");
+
+      const [ban] = await em.query(
+        `SELECT permanent,banned_until AS "bannedUntil"
+         FROM team_bans WHERE team_id=$1 AND user_id=$2`,
+        [id, uid],
+      );
+      if (ban) {
+        if (ban.permanent) {
+          throw new ForbiddenException("이 파티에서 영구 추방되었습니다.");
+        }
+        if (ban.bannedUntil && new Date(ban.bannedUntil).getTime() > Date.now()) {
+          const until = new Date(ban.bannedUntil).toLocaleTimeString("ko-KR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          throw new ForbiddenException(`임시 추방 상태입니다. ${until} 이후 다시 참가할 수 있습니다.`);
+        }
+        await em.query("DELETE FROM team_bans WHERE team_id=$1 AND user_id=$2", [id, uid]);
+      }
 
       const members = await em.query(
         "SELECT user_id FROM team_members WHERE team_id=$1",
@@ -214,10 +290,12 @@ export class CommunityService {
     return this.db.query(
       `SELECT u.id,u.nickname,u.avatar,tm.joined_at AS "joinedAt",
         tm.last_read_message_id AS "lastReadMessageId",
-        (t.owner_id=u.id) AS "isOwner"
+        (t.owner_id=u.id) AS "isOwner",
+        gp.tier,gp.level,t.game
        FROM team_members tm
        JOIN users u ON u.id=tm.user_id
        JOIN teams t ON t.id=tm.team_id
+       LEFT JOIN user_game_profiles gp ON gp.user_id=u.id AND gp.game=t.game
        WHERE tm.team_id=$1
        ORDER BY (t.owner_id=u.id) DESC,tm.joined_at ASC`,
       [id],
@@ -233,7 +311,7 @@ export class CommunityService {
        JOIN users u ON u.id=m.sender_id
        WHERE m.team_id=$1 AND ($2::int IS NULL OR m.id<$2)
        ORDER BY m.id DESC
-       LIMIT 50`,
+       LIMIT 40`,
       [id, before ?? null],
     );
     return rows.reverse();
@@ -287,20 +365,61 @@ export class CommunityService {
     return { teamId, userId: uid, messageId: safeId };
   }
 
-  async kick(ownerId: number, teamId: number, memberId: number) {
+  async kick(ownerId: number, teamId: number, memberId: number, duration: unknown) {
     await this.owner(ownerId, teamId);
     if (ownerId === memberId) {
       throw new BadRequestException("방장은 자기 자신을 추방할 수 없습니다.");
     }
-    const result = await this.db.query(
-      "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2 RETURNING user_id",
+    const [member] = await this.db.query(
+      "SELECT user_id FROM team_members WHERE team_id=$1 AND user_id=$2",
       [teamId, memberId],
     );
-    if (!result.length) {
-      throw new NotFoundException("해당 파티원을 찾을 수 없습니다.");
-    }
+    if (!member) throw new NotFoundException("해당 파티원을 찾을 수 없습니다.");
+
+    const kind = duration === "permanent" ? "permanent" : "5m";
+    const bannedUntil = kind === "5m" ? new Date(Date.now() + 5 * 60 * 1000) : null;
+    await this.db.transaction(async (em) => {
+      await em.query(
+        `INSERT INTO team_bans(team_id,user_id,created_by,permanent,banned_until,created_at)
+         VALUES($1,$2,$3,$4,$5,now())
+         ON CONFLICT(team_id,user_id) DO UPDATE SET
+           created_by=EXCLUDED.created_by,permanent=EXCLUDED.permanent,
+           banned_until=EXCLUDED.banned_until,created_at=now()`,
+        [teamId, memberId, ownerId, kind === "permanent", bannedUntil],
+      );
+      await em.query("DELETE FROM team_members WHERE team_id=$1 AND user_id=$2", [teamId, memberId]);
+    });
     communityEvents.emit("admin:update", { type: "membership", teamId });
-    return { teamId, userId: memberId };
+    return { teamId, userId: memberId, duration: kind, bannedUntil };
+  }
+
+  async reportUser(uid: number, data: any) {
+    const reportedUserId = positiveId(data?.reportedUserId);
+    if (reportedUserId === uid) throw new BadRequestException("본인은 신고할 수 없습니다.");
+    const category = boundedText(data?.category, 30, 2);
+    const details = boundedText(data?.details, 1000, 2);
+    const teamId = data?.teamId == null ? null : positiveId(data.teamId);
+    const [target] = await this.db.query("SELECT id FROM users WHERE id=$1", [reportedUserId]);
+    if (!target) throw new NotFoundException("신고할 플레이어를 찾을 수 없습니다.");
+    if (teamId != null) await this.member(uid, teamId);
+
+    const [row] = await this.db.query(
+      `INSERT INTO reports(reporter_id,reported_user_id,team_id,category,details)
+       VALUES($1,$2,$3,$4,$5)
+       RETURNING id,status,created_at AS "createdAt"`,
+      [uid, reportedUserId, teamId, category, details],
+    );
+    communityEvents.emit("admin:update", { type: "report_created", reportId: row.id });
+    return { ...row, message: "신고가 관리자에게 전달되었습니다." };
+  }
+
+  async announcements() {
+    return this.db.query(
+      `SELECT id,title,message,kind,created_at AS "createdAt",expires_at AS "expiresAt"
+       FROM announcements
+       WHERE active=true AND (expires_at IS NULL OR expires_at>now())
+       ORDER BY id DESC LIMIT 5`,
+    );
   }
 
   async deleteTeam(ownerId: number, teamId: number) {
@@ -308,6 +427,7 @@ export class CommunityService {
     await this.db.transaction(async (em) => {
       await em.query("DELETE FROM messages WHERE team_id=$1", [teamId]);
       await em.query("DELETE FROM team_members WHERE team_id=$1", [teamId]);
+      await em.query("DELETE FROM team_bans WHERE team_id=$1", [teamId]);
       await em.query("DELETE FROM teams WHERE id=$1", [teamId]);
     });
     communityEvents.emit("admin:update", { type: "team_deleted", teamId });
