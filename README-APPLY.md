@@ -1,50 +1,52 @@
-# PyGa 전체 교체 코드
+# PyGa feature update v3
 
-이 ZIP은 조각 코드가 아니라 **그대로 덮어쓰는 전체 파일**입니다.
+이번 패치 포함 내용
 
-적용 기능
-- 이미 가입된 이메일 재가입 차단
-- 이메일 대소문자/앞뒤 공백을 무시하고 중복 차단
-- 이미 사용 중인 닉네임 회원가입 차단
-- 닉네임 대소문자/앞뒤 공백을 무시하고 중복 차단
-- 프로필에서 다른 사람이 쓰는 닉네임으로 변경 차단
-- 일반 파티원 `파티 나가기` 추가
-- 방장은 나가기 대신 기존 `파티 삭제` 사용
-
-포함된 전체 파일
-- backend/src/auth/auth.service.ts
-- backend/src/users/users.service.ts
-- backend/src/community/community.service.ts
-- backend/src/community/realtime.ts
-- backend/schema.sql
-- frontend/lib/services/api.dart
-- frontend/lib/pyga_app.dart
+- 로그인 이메일은 가입 당시 저장된 대소문자와 정확히 일치해야 로그인됨
+- 회원가입 이메일/닉네임 중복은 계속 대소문자 무시로 차단
+- 파티 참가: `OO님이 파티에 참가했습니다.` 시스템 메시지 기록
+- 파티 나가기: `OO님이 파티에서 나갔습니다.` 시스템 메시지 기록
+- 추방: `OO님이 파티에서 퇴장되었습니다.` 시스템 메시지 기록
+- 관리자 채팅 검열에서도 SYSTEM 메시지 확인 가능
+- 신고 처리 시 신고자에게 처리 결과 알림 발송
+- 신고 대상이 정지되면 운영 정책 조치 알림 저장
+- 처리 완료 신고는 관리자 목록에서 5분 뒤 자동 숨김 (DB 기록은 유지)
+- 회원 관리에서 정지 해제 버튼을 눈에 보이게 추가
+- 정지/정지 해제 시 회원에게 알림 저장
+- 공지 개별 기록 삭제 기능
+- 공지 전체 기록 삭제 기능
+- 점검 중 공지는 점검 종료 전 삭제 불가
 
 ## 적용
-ZIP 내부의 `backend`, `frontend` 폴더를 PyGa 프로젝트 루트에 그대로 덮어씁니다.
 
-PowerShell:
+PyGa 루트에서 ZIP을 `-DestinationPath . -Force`로 덮어씁니다.
 
 ```powershell
 cd C:\Users\jang1\OneDrive\Desktop\PyGa
-Expand-Archive "C:\Users\jang1\Downloads\PyGa-duplicate-check-full-code.zip" -DestinationPath . -Force
-
-cd .\backend
-npm run build
-npm run db:setup
-
-cd ..\frontend
-flutter analyze
+Expand-Archive "$env:USERPROFILE\Downloads\PyGa-feature-update-v3.zip" -DestinationPath . -Force
 ```
 
-그 다음 테스트 후 커밋:
+## 확인
+
+```powershell
+cd C:\Users\jang1\OneDrive\Desktop\PyGa\backend
+npm run build
+npm run db:setup
+```
+
+그 다음 루트에서:
 
 ```powershell
 cd C:\Users\jang1\OneDrive\Desktop\PyGa
 git add .
 git diff --cached --check
-git commit -m "feat: prevent duplicate accounts and add party leave"
+git commit -m "feat: add moderation notifications and party activity logs"
 git push origin main
 ```
 
-주의: schema.sql은 기존 데이터에 이미 중복 이메일/닉네임이 있더라도 배포 자체가 실패하지 않도록 작성했습니다. 기존 중복 계정은 자동 삭제하지 않습니다. 앞으로 새 중복 가입/변경을 막습니다.
+Render Auto-Deploy 완료 후 Chrome에서 확인:
+
+```powershell
+cd C:\Users\jang1\OneDrive\Desktop\PyGa\frontend
+flutter run -d chrome --dart-define=API_BASE_URL=https://pyga-backend.onrender.com
+```

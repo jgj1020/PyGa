@@ -148,7 +148,9 @@ export class AuthService {
   }
 
   private async validate(loginDto: LoginDto) {
-    const email = loginDto.email.trim().toLowerCase();
+    // 로그인은 사용자가 가입할 때 저장된 이메일의 대소문자까지 정확히 일치해야 합니다.
+    // 회원가입 중복 검사는 계속 대소문자를 무시하므로 Jang/jang 계정이 따로 생성되지는 않습니다.
+    const email = loginDto.email.trim();
     const { password } = loginDto;
 
     if (Buffer.byteLength(password, "utf8") > 72) {
@@ -157,7 +159,7 @@ export class AuthService {
       );
     }
 
-    const user = await this.usersService.findByEmail(email);
+    const user = await this.usersService.findByEmailExact(email);
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new UnauthorizedException(

@@ -24,6 +24,16 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
   communityEvents.on("admin:update", (event) => {
     io.to("admins").emit("admin:update", event);
   });
+  communityEvents.on("team:system_message", (message: any) => {
+    if (!message?.teamId) return;
+    io.to("team:" + message.teamId).emit("message:new", message);
+    io.to("admins").emit("admin:message_new", message);
+    io.to("admins").emit("admin:update", { type: "message", teamId: message.teamId });
+  });
+  communityEvents.on("notification:update", (event: any) => {
+    if (!event?.userId) return;
+    io.to("user:" + event.userId).emit("notification:update", event.notification ?? event);
+  });
   communityEvents.on("announcement:update", async (event: any) => {
     io.emit("announcement:update", event);
     io.emit("maintenance:update", event);
@@ -191,6 +201,10 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
         }
 
         io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        if (result.systemMessage) {
+          io.to("team:" + teamId).emit("message:new", result.systemMessage);
+          io.to("admins").emit("admin:message_new", result.systemMessage);
+        }
         io.to("admins").emit("admin:update", {
           type: "membership",
           teamId,
@@ -223,6 +237,10 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
           }
         }
         io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        if (result.systemMessage) {
+          io.to("team:" + teamId).emit("message:new", result.systemMessage);
+          io.to("admins").emit("admin:message_new", result.systemMessage);
+        }
         io.to("admins").emit("admin:update", { type: "membership", teamId });
         return result;
       }),

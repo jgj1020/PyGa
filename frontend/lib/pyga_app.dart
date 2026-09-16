@@ -901,7 +901,7 @@ class _AuthPageState extends State<AuthPage> {
   Future<void> submit() async {
     if (busy || !form.currentState!.validate()) return;
 
-    final normalizedEmail = email.text.trim().toLowerCase();
+    final normalizedEmail = email.text.trim();
     final normalizedNickname = nickname.text.trim();
 
     setState(() => busy = true);
@@ -1445,6 +1445,45 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  Future<void> deleteAnnouncement(Map<String, dynamic> item) async {
+    final ok = await askConfirm(
+      context,
+      title: '공지 기록을 삭제할까요?',
+      message: '「${item['title']}」 공지 기록을 완전히 삭제합니다.',
+      action: '삭제',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      await Api.request('DELETE', '/admin/announcements/${item['id']}');
+      if (!mounted) return;
+      successNotice(context, '공지 삭제 완료', '공지 기록을 삭제했습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
+  Future<void> clearAnnouncementHistory() async {
+    final count = rows('announcements').length;
+    final ok = await askConfirm(
+      context,
+      title: '공지 기록 전체 삭제',
+      message: '저장된 공지 기록 $count건을 모두 삭제합니다. 이 작업은 되돌릴 수 없습니다.',
+      action: '전체 삭제',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      final result = await Api.request('DELETE', '/admin/announcements');
+      if (!mounted) return;
+      successNotice(context, '전체 삭제 완료', '${result['deletedCount'] ?? count}건의 공지 기록을 삭제했습니다.');
+      await load(silent: true);
+    } catch (e) {
+      if (mounted) notice(context, e);
+    }
+  }
+
   Future<Map<String, String>?> suspensionDialog({String titleText = '이용 정지 설정', bool allowNone = true}) async {
     String duration = allowNone ? 'none' : '1d';
     final note = TextEditingController();
@@ -1741,6 +1780,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (done.isNotEmpty) ...[
         const SizedBox(height: 18),
         const Text('처리 완료', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 4),
+        const Text('처리 완료된 신고는 5분 후 이 목록에서 자동으로 숨겨집니다. 기록 자체는 서버에 보관됩니다.', style: TextStyle(color: muted, fontSize: 11)),
         const SizedBox(height: 8),
         ...done.take(50).map((r) => _AdminReportCard(report: r)),
       ],
@@ -1750,7 +1791,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _adminAnnouncements(List<Map<String, dynamic>> items) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FilledButton.icon(onPressed: createAnnouncement, icon: const Icon(Icons.campaign_rounded), label: const Text('전체 공지 / 점검 알림 보내기')),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: createAnnouncement,
+                icon: const Icon(Icons.campaign_rounded),
+                label: const Text('전체 공지 / 점검 알림 보내기'),
+              ),
+              OutlinedButton.icon(
+                onPressed: items.isEmpty ? null : clearAnnouncementHistory,
+                icon: const Icon(Icons.delete_sweep_rounded, color: danger),
+                label: const Text('공지 기록 전체 삭제', style: TextStyle(color: danger)),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           if (items.isEmpty)
             const GlowCard(child: Text('공지 기록이 없습니다.', style: TextStyle(color: muted)))
@@ -1760,6 +1816,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   onClose: a['active'] == true && a['kind'] != 'maintenance'
                       ? () => closeAnnouncement(a)
                       : null,
+                  onDelete: a['kind'] == 'maintenance' && a['active'] == true
+                      ? null
+                      : () => deleteAnnouncement(a),
                 )),
         ],
       );
@@ -1777,11 +1836,12 @@ class _AdminMessageCard extends StatelessWidget {
       child: GlowCard(
         padding: const EdgeInsets.all(14),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.chat_bubble_rounded, color: purpleSoft),
+          Icon(message['kind'] == 'system' ? Icons.info_rounded : Icons.chat_bubble_rounded, color: message['kind'] == 'system' ? mint : purpleSoft),
           const SizedBox(width: 11),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Wrap(spacing: 6, children: [
               Text('${message['nickname']}', style: const TextStyle(fontWeight: FontWeight.w900)),
+              if (message['kind'] == 'system') const _MiniBadge(text: 'SYSTEM', color: mint),
               _MiniBadge(text: '${message['game']}', color: purpleSoft),
               _MiniBadge(text: '#${message['teamId']} ${message['teamTitle']}', color: mint),
             ]),
@@ -1864,17 +1924,26 @@ class _AdminUserCard extends StatelessWidget {
               Text('사유: ${user['suspensionReason']}', style: const TextStyle(color: danger, fontSize: 10)),
           ])),
           if (onSuspend != null)
-            PopupMenuButton<String>(
-              color: panelSoft,
-              onSelected: (v) {
-                if (v == 'suspend') onSuspend?.call();
-                if (v == 'unsuspend') onUnsuspend?.call();
-                if (v == 'delete') onDelete?.call();
-              },
-              itemBuilder: (_) => [
-                if (!suspended) const PopupMenuItem(value: 'suspend', child: Text('이용 정지')),
-                if (suspended) const PopupMenuItem(value: 'unsuspend', child: Text('정지 해제')),
-                if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('회원 삭제', style: TextStyle(color: danger))),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (suspended && onUnsuspend != null)
+                  TextButton.icon(
+                    onPressed: onUnsuspend,
+                    icon: const Icon(Icons.lock_open_rounded, color: mint, size: 18),
+                    label: const Text('정지 해제', style: TextStyle(color: mint, fontWeight: FontWeight.w800)),
+                  ),
+                PopupMenuButton<String>(
+                  color: panelSoft,
+                  onSelected: (v) {
+                    if (v == 'suspend') onSuspend?.call();
+                    if (v == 'delete') onDelete?.call();
+                  },
+                  itemBuilder: (_) => [
+                    if (!suspended) const PopupMenuItem(value: 'suspend', child: Text('이용 정지')),
+                    if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('회원 삭제', style: TextStyle(color: danger))),
+                  ],
+                ),
               ],
             ),
         ]),
@@ -1930,7 +1999,8 @@ class _AdminReportCard extends StatelessWidget {
 class _AdminAnnouncementCard extends StatelessWidget {
   final Map<String, dynamic> item;
   final VoidCallback? onClose;
-  const _AdminAnnouncementCard({required this.item, this.onClose});
+  final VoidCallback? onDelete;
+  const _AdminAnnouncementCard({required this.item, this.onClose, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -1951,7 +2021,18 @@ class _AdminAnnouncementCard extends StatelessWidget {
             const SizedBox(height: 7),
             Text('${item['message']}', style: const TextStyle(color: Color(0xFFD7DAE3), height: 1.45)),
           ])),
-          if (onClose != null) TextButton(onPressed: onClose, child: const Text('종료')),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onClose != null) TextButton(onPressed: onClose, child: const Text('종료')),
+              if (onDelete != null)
+                IconButton(
+                  onPressed: onDelete,
+                  tooltip: '공지 기록 삭제',
+                  icon: const Icon(Icons.delete_outline_rounded, color: danger),
+                ),
+            ],
+          ),
         ]),
       ),
     );
@@ -2161,6 +2242,141 @@ class _ActiveAnnouncementBannerState extends State<ActiveAnnouncementBanner> {
   }
 }
 
+class UserNotificationBanner extends StatefulWidget {
+  final bool compact;
+  const UserNotificationBanner({super.key, this.compact = false});
+
+  @override
+  State<UserNotificationBanner> createState() => _UserNotificationBannerState();
+}
+
+class _UserNotificationBannerState extends State<UserNotificationBanner> {
+  List<Map<String, dynamic>> items = [];
+  Timer? timer;
+  io.Socket? socket;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+    timer = Timer.periodic(const Duration(seconds: 12), (_) => load());
+    if (Api.token != null) {
+      socket = io.io(
+        Api.base,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .disableAutoConnect()
+            .enableForceNew()
+            .setAuth({'token': Api.token})
+            .build(),
+      );
+      socket!.on('notification:update', (_) => load());
+      socket!.connect();
+    }
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    socket?.dispose();
+    super.dispose();
+  }
+
+  Future<void> load() async {
+    if (Api.token == null) return;
+    try {
+      final raw = await Api.request('GET', '/community/notifications');
+      if (!mounted) return;
+      setState(() {
+        items = (raw as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .where((e) => e['readAt'] == null)
+            .toList();
+      });
+    } catch (_) {}
+  }
+
+  Future<void> markRead(Map<String, dynamic> item) async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      await Api.request('PATCH', '/community/notifications/${item['id']}/read');
+      if (!mounted) return;
+      setState(() => items.removeWhere((e) => e['id'] == item['id']));
+    } catch (e) {
+      if (mounted) notice(context, e);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Color colorFor(String kind) {
+    switch (kind) {
+      case 'moderation':
+        return warning;
+      case 'report':
+        return mint;
+      default:
+        return purpleSoft;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final item = items.first;
+    final accent = colorFor('${item['kind'] ?? 'system'}');
+    final more = items.length - 1;
+
+    return Container(
+      margin: EdgeInsets.fromLTRB(14, widget.compact ? 4 : 8, 14, 4),
+      padding: EdgeInsets.symmetric(horizontal: 13, vertical: widget.compact ? 9 : 11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF121721),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: accent.withAlpha(120)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.notifications_active_rounded, color: accent, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${item['title']}',
+                        style: TextStyle(color: accent, fontWeight: FontWeight.w900, fontSize: 12),
+                      ),
+                    ),
+                    if (more > 0) _MiniBadge(text: '+$more', color: accent),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${item['message']}',
+                  style: const TextStyle(color: Color(0xFFE3E5EC), fontSize: 11.5, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: busy ? null : () => markRead(item),
+            child: Text(busy ? '처리 중…' : '확인'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
@@ -2212,6 +2428,7 @@ class _MainPageState extends State<MainPage> {
               child: Column(
                 children: [
                   const SafeArea(bottom: false, child: ActiveAnnouncementBanner()),
+                  const UserNotificationBanner(),
                   Expanded(
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 380),
@@ -5228,6 +5445,7 @@ class _ChatPageState extends State<ChatPage> {
             child: Column(
               children: [
                 const ActiveAnnouncementBanner(compact: true),
+                const UserNotificationBanner(compact: true),
                 if (loading) const LinearProgressIndicator(color: mint, minHeight: 2),
                 Container(
                   margin: const EdgeInsets.fromLTRB(14, 8, 14, 0),
@@ -5367,6 +5585,40 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (message['kind'] == 'system') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: panelSoft,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: mint.withAlpha(55)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.info_outline_rounded, size: 14, color: mint),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${message['body']}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Color(0xFFC9CEDA), fontSize: 11.5, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (stamp.isNotEmpty) ...[
+                  const SizedBox(width: 7),
+                  Text(stamp, style: const TextStyle(color: muted, fontSize: 9)),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Row(

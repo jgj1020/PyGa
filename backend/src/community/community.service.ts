@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { DataSource } from "typeorm";
+import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { communityEvents } from "./events.js";
 
@@ -31,6 +32,29 @@ export function boundedText(value: unknown, max: number, min = 1): string {
 @Injectable()
 export class CommunityService {
   constructor(private readonly db: DataSource) {}
+
+  private async createSystemMessage(
+    queryer: any,
+    teamId: number,
+    userId: number,
+    body: string,
+  ) {
+    const clientId = randomUUID();
+    await queryer.query(
+      `INSERT INTO messages(team_id,sender_id,client_id,body,kind)
+       VALUES($1,$2,$3,$4,'system')`,
+      [teamId, userId, clientId, body],
+    );
+
+    const [message] = await queryer.query(
+      `SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",m.client_id AS "clientId",
+        m.body,m.kind,m.created_at AS "createdAt",u.nickname,u.avatar
+       FROM messages m JOIN users u ON u.id=m.sender_id
+       WHERE m.sender_id=$1 AND m.client_id=$2`,
+      [userId, clientId],
+    );
+    return message;
+  }
 
   async me(uid: number) {
     const [u] = await this.db.query(
@@ -230,58 +254,53 @@ export class CommunityService {
   }
 
   async join(uid: number, id: number, code?: unknown) {
-    const joined = await this.db.transaction(async (em) => {
-      const [t] = await em.query("SELECT * FROM teams WHERE id=$1 FOR UPDATE", [
-        id,
-      ]);
+    const result = await this.db.transaction(async (em) => {
+      const [t] = await em.query("SELECT * FROM teams WHERE id=$1 FOR UPDATE", [id]);
       if (!t) throw new NotFoundException("파티를 찾을 수 없습니다.");
 
       const [ban] = await em.query(
-        `SELECT permanent,banned_until AS "bannedUntil"
-         FROM team_bans WHERE team_id=$1 AND user_id=$2`,
+        `SELECT permanent,banned_until AS "bannedUntil" FROM team_bans WHERE team_id=$1 AND user_id=$2`,
         [id, uid],
       );
       if (ban) {
-        if (ban.permanent) {
-          throw new ForbiddenException("이 파티에서 영구 추방되었습니다.");
-        }
+        if (ban.permanent) throw new ForbiddenException("이 파티에서 영구 추방되었습니다.");
         if (ban.bannedUntil && new Date(ban.bannedUntil).getTime() > Date.now()) {
-          const until = new Date(ban.bannedUntil).toLocaleTimeString("ko-KR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          });
+          const until = new Date(ban.bannedUntil).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
           throw new ForbiddenException(`임시 추방 상태입니다. ${until} 이후 다시 참가할 수 있습니다.`);
         }
         await em.query("DELETE FROM team_bans WHERE team_id=$1 AND user_id=$2", [id, uid]);
       }
 
-      const members = await em.query(
-        "SELECT user_id FROM team_members WHERE team_id=$1",
-        [id],
-      );
-      if (members.some((m: any) => m.user_id === uid)) return t;
+      const members = await em.query("SELECT user_id FROM team_members WHERE team_id=$1", [id]);
+      if (members.some((m: any) => m.user_id === uid)) return { team: t, systemMessage: null };
+
       if (t.is_private) {
         const input = typeof code === "string" ? code.trim() : "";
         if (!/^\d{4}$/.test(input) || input !== t.access_code) {
           throw new ForbiddenException("비공개 파티 입장 코드가 올바르지 않습니다.");
         }
       }
-      if (members.length >= t.capacity) {
-        throw new BadRequestException("모집 인원이 가득 찼습니다.");
-      }
+      if (members.length >= t.capacity) throw new BadRequestException("모집 인원이 가득 찼습니다.");
 
-      const [latest] = await em.query(
-        "SELECT COALESCE(MAX(id),0)::int AS id FROM messages WHERE team_id=$1",
-        [id],
-      );
+      const [latest] = await em.query("SELECT COALESCE(MAX(id),0)::int AS id FROM messages WHERE team_id=$1", [id]);
       await em.query(
         "INSERT INTO team_members(team_id,user_id,last_read_message_id) VALUES($1,$2,$3)",
         [id, uid, latest?.id ?? 0],
       );
-      return t;
+
+      const [user] = await em.query("SELECT nickname FROM users WHERE id=$1", [uid]);
+      const systemMessage = await this.createSystemMessage(
+        em,
+        id,
+        uid,
+        `${user?.nickname ?? "회원"}님이 파티에 참가했습니다.`,
+      );
+      return { team: t, systemMessage };
     });
+
     communityEvents.emit("admin:update", { type: "membership", teamId: id });
-    return joined;
+    if (result.systemMessage) communityEvents.emit("team:system_message", result.systemMessage);
+    return result.team;
   }
 
   async member(uid: number, id: number) {
@@ -331,7 +350,7 @@ export class CommunityService {
     await this.member(uid, id);
     const rows = await this.db.query(
       `SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",m.client_id AS "clientId",
-        m.body,m.created_at AS "createdAt",u.nickname,u.avatar
+        m.body,m.kind,m.created_at AS "createdAt",u.nickname,u.avatar
        FROM messages m
        JOIN users u ON u.id=m.sender_id
        WHERE m.team_id=$1 AND ($2::int IS NULL OR m.id<$2)
@@ -356,14 +375,14 @@ export class CommunityService {
 
     await this.member(uid, id);
     await this.db.query(
-      `INSERT INTO messages(team_id,sender_id,client_id,body) VALUES($1,$2,$3,$4)
+      `INSERT INTO messages(team_id,sender_id,client_id,body,kind) VALUES($1,$2,$3,$4,'user')
        ON CONFLICT(sender_id,client_id) DO NOTHING`,
       [id, uid, data.clientId, body],
     );
 
     const [m] = await this.db.query(
       `SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",m.client_id AS "clientId",
-        m.body,m.created_at AS "createdAt",u.nickname,u.avatar
+        m.body,m.kind,m.created_at AS "createdAt",u.nickname,u.avatar
        FROM messages m JOIN users u ON u.id=m.sender_id
        WHERE m.sender_id=$1 AND m.client_id=$2`,
       [uid, data.clientId],
@@ -392,40 +411,40 @@ export class CommunityService {
 
   async leaveTeam(uid: number, teamId: number) {
     const membership = await this.member(uid, teamId);
-
     if (membership.ownerId === uid) {
-      throw new BadRequestException(
-        "방장은 파티를 나갈 수 없습니다. 파티 삭제를 이용해주세요.",
-      );
+      throw new BadRequestException("방장은 파티를 나갈 수 없습니다. 파티 삭제를 이용해주세요.");
     }
 
-    await this.db.query(
-      "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
-      [teamId, uid],
-    );
-
-    communityEvents.emit("admin:update", {
-      type: "membership",
-      teamId,
+    const systemMessage = await this.db.transaction(async (em) => {
+      const [user] = await em.query("SELECT nickname FROM users WHERE id=$1", [uid]);
+      const message = await this.createSystemMessage(
+        em,
+        teamId,
+        uid,
+        `${user?.nickname ?? "회원"}님이 파티에서 나갔습니다.`,
+      );
+      await em.query("DELETE FROM team_members WHERE team_id=$1 AND user_id=$2", [teamId, uid]);
+      return message;
     });
 
-    return { teamId, userId: uid };
+    communityEvents.emit("admin:update", { type: "membership", teamId });
+    return { teamId, userId: uid, systemMessage };
   }
 
   async kick(ownerId: number, teamId: number, memberId: number, duration: unknown) {
     await this.owner(ownerId, teamId);
-    if (ownerId === memberId) {
-      throw new BadRequestException("방장은 자기 자신을 추방할 수 없습니다.");
-    }
+    if (ownerId === memberId) throw new BadRequestException("방장은 자기 자신을 추방할 수 없습니다.");
+
     const [member] = await this.db.query(
-      "SELECT user_id FROM team_members WHERE team_id=$1 AND user_id=$2",
+      `SELECT u.id,u.nickname FROM team_members tm JOIN users u ON u.id=tm.user_id
+       WHERE tm.team_id=$1 AND tm.user_id=$2`,
       [teamId, memberId],
     );
     if (!member) throw new NotFoundException("해당 파티원을 찾을 수 없습니다.");
 
     const kind = duration === "permanent" ? "permanent" : "5m";
     const bannedUntil = kind === "5m" ? new Date(Date.now() + 5 * 60 * 1000) : null;
-    await this.db.transaction(async (em) => {
+    const systemMessage = await this.db.transaction(async (em) => {
       await em.query(
         `INSERT INTO team_bans(team_id,user_id,created_by,permanent,banned_until,created_at)
          VALUES($1,$2,$3,$4,$5,now())
@@ -434,10 +453,17 @@ export class CommunityService {
            banned_until=EXCLUDED.banned_until,created_at=now()`,
         [teamId, memberId, ownerId, kind === "permanent", bannedUntil],
       );
+      const message = await this.createSystemMessage(
+        em,
+        teamId,
+        memberId,
+        `${member.nickname}님이 파티에서 퇴장되었습니다.`,
+      );
       await em.query("DELETE FROM team_members WHERE team_id=$1 AND user_id=$2", [teamId, memberId]);
+      return message;
     });
     communityEvents.emit("admin:update", { type: "membership", teamId });
-    return { teamId, userId: memberId, duration: kind, bannedUntil };
+    return { teamId, userId: memberId, duration: kind, bannedUntil, systemMessage };
   }
 
   async reportUser(uid: number, data: any) {
@@ -458,6 +484,35 @@ export class CommunityService {
     );
     communityEvents.emit("admin:update", { type: "report_created", reportId: row.id });
     return { ...row, message: "신고가 관리자에게 전달되었습니다." };
+  }
+
+  async notifications(uid: number) {
+    return this.db.query(
+      `SELECT id,title,message,kind,related_report_id AS "relatedReportId",
+        read_at AS "readAt",created_at AS "createdAt"
+       FROM notifications WHERE user_id=$1
+       ORDER BY (read_at IS NULL) DESC,id DESC LIMIT 50`,
+      [uid],
+    );
+  }
+
+  async readNotification(uid: number, rawId: unknown) {
+    const id = positiveId(rawId);
+    const [row] = await this.db.query(
+      `UPDATE notifications SET read_at=COALESCE(read_at,now())
+       WHERE id=$1 AND user_id=$2 RETURNING id,read_at AS "readAt"`,
+      [id, uid],
+    );
+    if (!row) throw new NotFoundException("알림을 찾을 수 없습니다.");
+    return row;
+  }
+
+  async readAllNotifications(uid: number) {
+    await this.db.query(
+      "UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE user_id=$1 AND read_at IS NULL",
+      [uid],
+    );
+    return { ok: true };
   }
 
   async announcements() {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { AdminGuard } from "./admin.guard.js";
 import { AdminService } from "./admin.service.js";
 
@@ -20,6 +20,16 @@ export class AdminController {
   @Patch("announcements/:id/close")
   closeAnnouncement(@Req() req: any, @Param("id") id: string) {
     return this.service.closeAnnouncement(req.admin.id, id);
+  }
+
+  @Delete("announcements/:id")
+  deleteAnnouncement(@Req() req: any, @Param("id") id: string) {
+    return this.service.deleteAnnouncement(req.admin.id, id);
+  }
+
+  @Delete("announcements")
+  clearAnnouncements(@Req() req: any) {
+    return this.service.clearAnnouncements(req.admin.id);
   }
 
   @Patch("reports/:id/resolve")

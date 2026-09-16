@@ -79,9 +79,11 @@ CREATE TABLE IF NOT EXISTS messages(
   sender_id INTEGER NOT NULL REFERENCES users(id),
   client_id UUID NOT NULL,
   body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
+  kind VARCHAR(20) NOT NULL DEFAULT 'user',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(sender_id,client_id)
 );
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'user';
 CREATE INDEX IF NOT EXISTS messages_team_page_idx ON messages(team_id,id DESC);
 
 -- 방장이 5분 또는 영구 추방을 선택할 수 있도록 파티별 차단 상태를 보관합니다.
@@ -125,6 +127,19 @@ CREATE TABLE IF NOT EXISTS reports(
 );
 CREATE INDEX IF NOT EXISTS reports_status_idx ON reports(status,created_at DESC);
 CREATE INDEX IF NOT EXISTS reports_reported_user_idx ON reports(reported_user_id,created_at DESC);
+
+-- 사용자에게 전달되는 운영/신고 처리 알림입니다. 읽기 전까지 앱에서 확인할 수 있습니다.
+CREATE TABLE IF NOT EXISTS notifications(
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(100) NOT NULL,
+  message TEXT NOT NULL CHECK(length(message) BETWEEN 1 AND 1200),
+  kind VARCHAR(30) NOT NULL DEFAULT 'system',
+  related_report_id INTEGER REFERENCES reports(id) ON DELETE SET NULL,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications(user_id,read_at,created_at DESC);
 
 -- 운영 공지/점검 알림. maintenance는 점검 중, maintenance_soon은 점검 예고입니다.
 CREATE TABLE IF NOT EXISTS announcements(

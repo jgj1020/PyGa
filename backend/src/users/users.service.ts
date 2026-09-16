@@ -28,6 +28,12 @@ export class UsersService {
       .getOne();
   }
 
+  findByEmailExact(email: string): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { email: email.trim() },
+    });
+  }
+
   findById(id: number): Promise<User | null> {
     return this.usersRepository.findOne({ where: { id } });
   }

@@ -53,6 +53,21 @@ export class CommunityController {
     return this.service.reportUser(r.session.sub, b);
   }
 
+  @Get("notifications")
+  notifications(@Req() r: any) {
+    return this.service.notifications(r.session.sub);
+  }
+
+  @Patch("notifications/read-all")
+  readAllNotifications(@Req() r: any) {
+    return this.service.readAllNotifications(r.session.sub);
+  }
+
+  @Patch("notifications/:id/read")
+  readNotification(@Req() r: any, @Param("id") id: string) {
+    return this.service.readNotification(r.session.sub, id);
+  }
+
   @Get("announcements")
   announcements() {
     return this.service.announcements();

@@ -33,6 +33,24 @@ export class AdminService {
     private readonly maintenance: MaintenanceService,
   ) {}
 
+  private async createNotification(
+    userId: number,
+    title: string,
+    message: string,
+    kind = "system",
+    relatedReportId: number | null = null,
+  ) {
+    const [row] = await this.db.query(
+      `INSERT INTO notifications(user_id,title,message,kind,related_report_id)
+       VALUES($1,$2,$3,$4,$5)
+       RETURNING id,title,message,kind,related_report_id AS "relatedReportId",
+         read_at AS "readAt",created_at AS "createdAt"`,
+      [userId, title, message, kind, relatedReportId],
+    );
+    communityEvents.emit("notification:update", { userId, notification: row });
+    return row;
+  }
+
   async requireAdmin(uid: number) {
     const [user] = await this.db.query(
       'SELECT id,nickname,email,is_admin AS "isAdmin" FROM users WHERE id=$1',
@@ -63,7 +81,7 @@ export class AdminService {
         FROM teams t JOIN users u ON u.id=t.owner_id
         ORDER BY t.id DESC LIMIT 200`),
       this.db.query(`SELECT m.id,m.team_id AS "teamId",m.sender_id AS "senderId",
-          m.body,m.created_at AS "createdAt",u.nickname,u.email,
+          m.body,m.kind,m.created_at AS "createdAt",u.nickname,u.email,
           t.title AS "teamTitle",t.game
         FROM messages m
         JOIN users u ON u.id=m.sender_id
@@ -80,6 +98,8 @@ export class AdminService {
         JOIN users reporter ON reporter.id=r.reporter_id
         JOIN users target ON target.id=r.reported_user_id
         LEFT JOIN teams t ON t.id=r.team_id
+        WHERE r.status='pending'
+           OR (r.resolved_at IS NOT NULL AND r.resolved_at > now() - interval '5 minutes')
         ORDER BY (r.status='pending') DESC,r.id DESC LIMIT 250`),
       this.db.query(`SELECT a.id,a.title,a.message,a.kind,a.active,
           a.created_at AS "createdAt",a.expires_at AS "expiresAt",u.nickname AS "createdByName"
@@ -211,6 +231,39 @@ export class AdminService {
     return row;
   }
 
+  async deleteAnnouncement(adminId: number, rawId: unknown) {
+    await this.requireAdmin(adminId);
+    const id = positiveId(rawId);
+    const [current] = await this.db.query(
+      `SELECT id,title,kind,active FROM announcements WHERE id=$1`,
+      [id],
+    );
+    if (!current) throw new NotFoundException("공지를 찾을 수 없습니다.");
+    if (current.active && current.kind === "maintenance") {
+      throw new BadRequestException("점검 중 공지는 점검 종료 후 삭제해주세요.");
+    }
+    await this.db.query("DELETE FROM announcements WHERE id=$1", [id]);
+    this.maintenance.invalidate();
+    communityEvents.emit("announcement:update", { type: "deleted", announcementId: id });
+    communityEvents.emit("admin:update", { type: "announcement_deleted", announcementId: id });
+    return { id };
+  }
+
+  async clearAnnouncements(adminId: number) {
+    await this.requireAdmin(adminId);
+    const [activeMaintenance] = await this.db.query(
+      `SELECT id FROM announcements WHERE active=true AND kind='maintenance' LIMIT 1`,
+    );
+    if (activeMaintenance) {
+      throw new BadRequestException("점검 종료 공지를 먼저 전송한 뒤 전체 기록을 삭제해주세요.");
+    }
+    const result = await this.db.query("DELETE FROM announcements RETURNING id");
+    this.maintenance.invalidate();
+    communityEvents.emit("announcement:update", { type: "cleared" });
+    communityEvents.emit("admin:update", { type: "announcement_cleared" });
+    return { deletedCount: result.length };
+  }
+
   async suspendUser(adminId: number, userIdRaw: unknown, data: any) {
     await this.requireAdmin(adminId);
     const userId = positiveId(userIdRaw);
@@ -237,6 +290,12 @@ export class AdminService {
       reason,
     });
     communityEvents.emit("admin:update", { type: "user_suspended", userId });
+    await this.createNotification(
+      userId,
+      "이용 제한 안내",
+      `운영 정책 검토 결과 ${spec.label} 이용 제한이 적용되었습니다. 사유: ${reason}`,
+      "moderation",
+    );
     return { userId, duration: data?.duration, label: spec.label, until: spec.until, reason };
   }
 
@@ -249,6 +308,12 @@ export class AdminService {
     );
     communityEvents.emit("moderation:update", { type: "unsuspended", userId });
     communityEvents.emit("admin:update", { type: "user_unsuspended", userId });
+    await this.createNotification(
+      userId,
+      "이용 제한 해제",
+      "관리자 검토로 계정 이용 제한이 해제되었습니다. 다시 PyGa를 이용할 수 있습니다.",
+      "moderation",
+    );
     return { userId };
   }
 
@@ -256,7 +321,7 @@ export class AdminService {
     await this.requireAdmin(adminId);
     const reportId = positiveId(reportIdRaw);
     const [report] = await this.db.query(
-      `SELECT id,reported_user_id AS "reportedUserId",status FROM reports WHERE id=$1`,
+      `SELECT id,reporter_id AS "reporterId",reported_user_id AS "reportedUserId",status FROM reports WHERE id=$1`,
       [reportId],
     );
     if (!report) throw new NotFoundException("신고를 찾을 수 없습니다.");
@@ -292,7 +357,25 @@ export class AdminService {
         until: spec.until,
         reason: adminNote ?? "신고 처리",
       });
+      await this.createNotification(
+        report.reportedUserId,
+        "운영 정책 조치 안내",
+        `신고 검토 결과 운영 정책 위반이 확인되어 ${spec.label} 이용 제한이 적용되었습니다.${adminNote ? ` 사유: ${adminNote}` : ""}`,
+        "moderation",
+        reportId,
+      );
     }
+
+    await this.createNotification(
+      report.reporterId,
+      "신고 처리 결과",
+      duration === 'none'
+        ? "회원님이 접수한 신고가 정상적으로 검토·처리되었습니다. 신고해 주셔서 감사합니다."
+        : "회원님이 접수한 신고가 확인되어 운영 정책에 따라 필요한 조치를 완료했습니다. 더 안전한 PyGa를 만드는 데 도움을 주셔서 감사합니다.",
+      "report",
+      reportId,
+    );
+
     communityEvents.emit("admin:update", { type: "report_resolved", reportId });
     return { reportId, userId: report.reportedUserId, duration, label: spec.label, until: spec.until };
   }
