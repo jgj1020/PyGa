@@ -200,7 +200,15 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
           }
         }
 
-        io.to("team:" + teamId).emit("team:members_changed", { teamId });
+        if (result.deleted) {
+          io.to("team:" + teamId).emit("team:deleted", { teamId });
+        } else {
+          io.to("team:" + teamId).emit("team:members_changed", {
+            teamId,
+            newOwnerId: result.newOwnerId ?? null,
+          });
+        }
+
         if (result.systemMessage) {
           io.to("team:" + teamId).emit("message:new", result.systemMessage);
           io.to("admins").emit("admin:message_new", result.systemMessage);
@@ -214,6 +222,37 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
       }),
     );
 
+    socket.on("team:transfer_owner", (data, ack) =>
+      void run(ack, async (uid) => {
+        const teamId = positiveId(data?.teamId);
+        const memberId = positiveId(data?.memberId);
+
+        const result = await service.transferOwner(
+          uid,
+          teamId,
+          memberId,
+        );
+
+        io.to("team:" + teamId).emit("team:members_changed", {
+          teamId,
+          newOwnerId: result.newOwnerId,
+        });
+
+        if (result.systemMessage) {
+          io.to("team:" + teamId).emit(
+            "message:new",
+            result.systemMessage,
+          );
+
+          io.to("admins").emit(
+            "admin:message_new",
+            result.systemMessage,
+          );
+        }
+
+        return result;
+      }),
+    );
     socket.on("team:kick", (data, ack) =>
       void run(ack, async (uid) => {
         const teamId = positiveId(data?.teamId);
@@ -237,6 +276,7 @@ export function realtime(app: INestApplication, corsOrigin: CorsOriginChecker) {
           }
         }
         io.to("team:" + teamId).emit("team:members_changed", { teamId });
+
         if (result.systemMessage) {
           io.to("team:" + teamId).emit("message:new", result.systemMessage);
           io.to("admins").emit("admin:message_new", result.systemMessage);

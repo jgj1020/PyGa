@@ -73,14 +73,24 @@ export class CommunityController {
     return this.service.announcements();
   }
 
+  @Get("teams/counts")
+  recruitmentCounts() {
+    return this.service.recruitmentCounts();
+  }
+
   @Get("teams")
-  teams(@Req() r: any, @Query("mine") m: string) {
-    return this.service.teams(r.session.sub, m === "true");
+  teams(@Req() r: any, @Query() query: any) {
+    return this.service.teams(r.session.sub, query.mine === "true", query);
   }
 
   @Post("teams")
   create(@Req() r: any, @Body() b: any) {
     return this.service.create(r.session.sub, b);
+  }
+
+  @Patch("teams/:id/recruitment")
+  recruitment(@Req() r: any, @Param("id") id: string, @Body() body: any) {
+    return this.service.setRecruitment(r.session.sub, positiveId(id), body?.open);
   }
 
   @Post("teams/:id/join")

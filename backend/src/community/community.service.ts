@@ -232,10 +232,28 @@ export class CommunityService {
     return { ...user, gameProfiles, isMe: requesterId === userId };
   }
 
-  teams(uid: number, mine: boolean) {
+  recruitmentCounts() {
+    return this.db.query(
+      `SELECT t.game,COUNT(*)::int AS count FROM teams t
+       WHERE t.recruitment_open AND
+         (SELECT COUNT(*) FROM team_members m WHERE m.team_id=t.id)<t.capacity
+       GROUP BY t.game`,
+    );
+  }
+
+  teams(uid: number, mine: boolean, filters: any = {}) {
+    const optionalText = (value: unknown, max: number) =>
+      value == null || value === "" ? null : boundedText(value, max);
+    const mic = filters.mic == null || filters.mic === "" ? null : filters.mic;
+    if (mic !== null && mic !== "true" && mic !== "false") {
+      throw new BadRequestException("마이크 조건을 확인해주세요.");
+    }
+    if (filters.available != null && !["true", "false"].includes(filters.available)) {
+      throw new BadRequestException("모집 조건을 확인해주세요.");
+    }
     return this.db.query(
       `SELECT t.id,t.title,t.game,t.mode,t.style,t.mic,t.capacity,t.owner_id,t.created_at,
-        t.is_private AS "isPrivate",
+        t.is_private AS "isPrivate",t.recruitment_open AS "recruitmentOpen",
         CASE WHEN t.owner_id=$1 THEN t.access_code ELSE NULL END AS "accessCode",
         u.nickname AS "ownerName",u.avatar AS "ownerAvatar",
         gp.tier AS "ownerTier",gp.level AS "ownerLevel",
@@ -254,10 +272,29 @@ export class CommunityService {
       WHERE ($2::boolean=false OR EXISTS(
         SELECT 1 FROM team_members m WHERE m.team_id=t.id AND m.user_id=$1
       ))
+      AND ($3::text IS NULL OR t.game=$3)
+      AND ($4::text IS NULL OR t.style=$4)
+      AND ($5::boolean IS NULL OR t.mic=$5)
+      AND ($6::boolean=false OR (t.recruitment_open AND
+        (SELECT COUNT(*) FROM team_members m WHERE m.team_id=t.id) < t.capacity))
+      AND ($7::text IS NULL OR strpos(lower(concat_ws(' ',t.title,t.game,t.mode,u.nickname)),lower($7)) > 0)
+      AND ($8::text IS NULL OR t.mode=$8)
       ORDER BY t.id DESC
       LIMIT 100`,
-      [uid, mine],
+      [uid, mine, optionalText(filters.game,40), optionalText(filters.style,20),
+        mic === null ? null : mic === "true", filters.available === "true", optionalText(filters.q,100), optionalText(filters.mode,40)],
     );
+  }
+
+  async setRecruitment(uid: number, id: number, open: unknown) {
+    if (typeof open !== "boolean") throw new BadRequestException("모집 상태를 확인해주세요.");
+    const [team] = await this.db.query(
+      `UPDATE teams SET recruitment_open=$3 WHERE id=$1 AND owner_id=$2
+       RETURNING id,recruitment_open AS "recruitmentOpen"`, [id, uid, open],
+    );
+    if (!team) throw new ForbiddenException("방장만 모집 상태를 변경할 수 있습니다.");
+    communityEvents.emit("admin:update", { type: "recruitment", teamId: id });
+    return team;
   }
 
   async create(uid: number, data: any) {
@@ -315,6 +352,7 @@ export class CommunityService {
       const members = await em.query("SELECT user_id FROM team_members WHERE team_id=$1", [id]);
       if (members.some((m: any) => m.user_id === uid)) return { team: t, systemMessage: null };
 
+      if (!t.recruitment_open) throw new BadRequestException("모집이 마감된 파티입니다.");
       if (t.is_private) {
         const input = typeof code === "string" ? code.trim() : "";
         if (!/^\d{4}$/.test(input) || input !== t.access_code) {
@@ -451,27 +489,185 @@ export class CommunityService {
   }
 
   async leaveTeam(uid: number, teamId: number) {
-    const membership = await this.member(uid, teamId);
-    if (membership.ownerId === uid) {
-      throw new BadRequestException("방장은 파티를 나갈 수 없습니다. 파티 삭제를 이용해주세요.");
-    }
+    const result = await this.db.transaction(async (em) => {
+      const [team] = await em.query(
+        `SELECT id, owner_id AS "ownerId"
+         FROM teams
+         WHERE id=$1
+         FOR UPDATE`,
+        [teamId],
+      );
 
-    const systemMessage = await this.db.transaction(async (em) => {
-      const [user] = await em.query("SELECT nickname FROM users WHERE id=$1", [uid]);
-      const message = await this.createSystemMessage(
+      if (!team) {
+        throw new NotFoundException("파티를 찾을 수 없습니다.");
+      }
+
+      const [member] = await em.query(
+        `SELECT u.id,u.nickname
+         FROM team_members tm
+         JOIN users u ON u.id=tm.user_id
+         WHERE tm.team_id=$1 AND tm.user_id=$2`,
+        [teamId, uid],
+      );
+
+      if (!member) {
+        throw new ForbiddenException("가입한 파티에서만 이용할 수 있습니다.");
+      }
+
+      const isOwner = team.ownerId === uid;
+
+      if (!isOwner) {
+        const systemMessage = await this.createSystemMessage(
+          em,
+          teamId,
+          uid,
+          `${member.nickname}님이 파티에서 나갔습니다.`,
+        );
+
+        await em.query(
+          "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
+          [teamId, uid],
+        );
+
+        return {
+          teamId,
+          userId: uid,
+          ownerChanged: false,
+          deleted: false,
+          newOwnerId: null,
+          newOwnerNickname: null,
+          systemMessage,
+        };
+      }
+
+      const remainingMembers = await em.query(
+        `SELECT tm.user_id AS "userId",u.nickname
+         FROM team_members tm
+         JOIN users u ON u.id=tm.user_id
+         WHERE tm.team_id=$1 AND tm.user_id<>$2`,
+        [teamId, uid],
+      );
+
+      if (remainingMembers.length === 0) {
+        await em.query("DELETE FROM messages WHERE team_id=$1", [teamId]);
+        await em.query("DELETE FROM team_members WHERE team_id=$1", [teamId]);
+        await em.query("DELETE FROM team_bans WHERE team_id=$1", [teamId]);
+        await em.query("DELETE FROM teams WHERE id=$1", [teamId]);
+
+        return {
+          teamId,
+          userId: uid,
+          ownerChanged: false,
+          deleted: true,
+          newOwnerId: null,
+          newOwnerNickname: null,
+          systemMessage: null,
+        };
+      }
+
+      const randomIndex = Math.floor(
+        Math.random() * remainingMembers.length,
+      );
+
+      const nextOwner = remainingMembers[randomIndex];
+
+      await em.query(
+        "UPDATE teams SET owner_id=$2 WHERE id=$1",
+        [teamId, nextOwner.userId],
+      );
+
+      const systemMessage = await this.createSystemMessage(
         em,
         teamId,
         uid,
-        `${user?.nickname ?? "회원"}님이 파티에서 나갔습니다.`,
+        `${member.nickname}님이 나갔습니다. ${nextOwner.nickname}님이 새로운 방장이 되었습니다.`,
       );
-      await em.query("DELETE FROM team_members WHERE team_id=$1 AND user_id=$2", [teamId, uid]);
-      return message;
+
+      await em.query(
+        "DELETE FROM team_members WHERE team_id=$1 AND user_id=$2",
+        [teamId, uid],
+      );
+
+      return {
+        teamId,
+        userId: uid,
+        ownerChanged: true,
+        deleted: false,
+        newOwnerId: nextOwner.userId,
+        newOwnerNickname: nextOwner.nickname,
+        systemMessage,
+      };
     });
 
-    communityEvents.emit("admin:update", { type: "membership", teamId });
-    return { teamId, userId: uid, systemMessage };
-  }
+    communityEvents.emit("admin:update", {
+      type: result.deleted ? "team_deleted" : "membership",
+      teamId,
+    });
 
+    return result;
+  }
+  async transferOwner(ownerId: number, teamId: number, memberId: number) {
+    const result = await this.db.transaction(async (em) => {
+      const [team] = await em.query(
+        `SELECT id,owner_id AS "ownerId"
+         FROM teams
+         WHERE id=$1
+         FOR UPDATE`,
+        [teamId],
+      );
+
+      if (!team) {
+        throw new NotFoundException("파티를 찾을 수 없습니다.");
+      }
+
+      if (team.ownerId !== ownerId) {
+        throw new ForbiddenException("방장만 권한을 넘길 수 있습니다.");
+      }
+
+      if (ownerId === memberId) {
+        throw new BadRequestException("본인에게 방장 권한을 넘길 수 없습니다.");
+      }
+
+      const [member] = await em.query(
+        `SELECT u.id,u.nickname
+         FROM team_members tm
+         JOIN users u ON u.id=tm.user_id
+         WHERE tm.team_id=$1 AND tm.user_id=$2`,
+        [teamId, memberId],
+      );
+
+      if (!member) {
+        throw new NotFoundException("해당 파티원을 찾을 수 없습니다.");
+      }
+
+      await em.query(
+        "UPDATE teams SET owner_id=$2 WHERE id=$1",
+        [teamId, memberId],
+      );
+
+      const systemMessage = await this.createSystemMessage(
+        em,
+        teamId,
+        ownerId,
+        `${member.nickname}님에게 방장 권한이 넘어갔습니다.`,
+      );
+
+      return {
+        teamId,
+        previousOwnerId: ownerId,
+        newOwnerId: memberId,
+        newOwnerNickname: member.nickname,
+        systemMessage,
+      };
+    });
+
+    communityEvents.emit("admin:update", {
+      type: "membership",
+      teamId,
+    });
+
+    return result;
+  }
   async kick(ownerId: number, teamId: number, memberId: number, duration: unknown) {
     await this.owner(ownerId, teamId);
     if (ownerId === memberId) throw new BadRequestException("방장은 자기 자신을 추방할 수 없습니다.");

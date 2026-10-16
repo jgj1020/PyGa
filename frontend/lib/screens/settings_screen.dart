@@ -40,7 +40,7 @@ class SettingsScreen extends StatelessWidget {
             trailing: Switch(
               value: true,
               onChanged: (_) {},
-              activeColor: AppTheme.purple,
+              activeThumbColor: AppTheme.purple,
             ),
             onTap: () {},
           ),
@@ -50,7 +50,7 @@ class SettingsScreen extends StatelessWidget {
             trailing: Switch(
               value: false,
               onChanged: (_) {},
-              activeColor: AppTheme.purple,
+              activeThumbColor: AppTheme.purple,
             ),
             onTap: () {},
           ),

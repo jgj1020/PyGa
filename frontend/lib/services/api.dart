@@ -54,8 +54,10 @@ class Api {
     if (token != null) req.headers['Authorization'] = 'Bearer $token';
     if (body != null) req.body = jsonEncode(body);
 
-    final streamed = await _client.send(req).timeout(const Duration(seconds: 65));
-    final response = await http.Response.fromStream(streamed);
+    final response = await (() async {
+      final streamed = await _client.send(req);
+      return http.Response.fromStream(streamed);
+    })().timeout(const Duration(seconds: 65));
 
     dynamic data = <String, dynamic>{};
     if (response.body.isNotEmpty) {
@@ -85,7 +87,13 @@ class Api {
   ]) async {
     Object? lastConnectionError;
 
-    for (final candidate in _baseCandidates) {
+    // A timed-out mutation may already have been committed by the server.
+    // Only reads may retry automatically against another local hostname.
+    final readOnly = method.toUpperCase() == 'GET' || method.toUpperCase() == 'HEAD';
+    final candidates = readOnly
+        ? <String>{_activeBase, ..._baseCandidates}.toList()
+        : <String>[_activeBase];
+    for (final candidate in candidates) {
       try {
         final result = await _send(candidate, method, path, body);
         _activeBase = candidate;
@@ -100,7 +108,9 @@ class Api {
     }
 
     if (lastConnectionError != null) {
-      throw Exception('백엔드 서버에 연결할 수 없습니다. 서버가 깨어나는 중이면 잠시 후 다시 시도해주세요.');
+      throw Exception(readOnly
+          ? '서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.'
+          : '처리 결과를 확인하지 못했습니다. 중복 요청을 막기 위해 자동 재전송하지 않았어요. 새로고침으로 결과를 확인해주세요.');
     }
     throw Exception('서버 요청에 실패했습니다.');
   }
